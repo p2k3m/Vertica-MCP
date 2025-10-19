@@ -1,65 +1,175 @@
 name: Build & Deploy MCP (apply)
-run: bash import-if-exists.sh || true
 
+on:
+  workflow_dispatch:
+    inputs:
+      recreate:
+        type: boolean
+        description: Destroy existing infrastructure before applying
+        default: false
+      use_cloudfront:
+        type: boolean
+        description: Enable CloudFront distribution in front of MCP
+        default: false
 
-- name: Optional destroy (recreate)
-if: ${{ inputs.recreate }}
-working-directory: infra
-run: terraform destroy -auto-approve || true
+concurrency:
+  group: build-deploy-mcp
+  cancel-in-progress: false
 
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
 
-- name: Validate & Plan (detailed exit code)
-working-directory: infra
-run: |
-terraform validate
-terraform plan -detailed-exitcode \
--var="aws_region=${{ env.AWS_REGION }}" \
--var="account_id=${{ env.AWS_ACCOUNT_ID }}" \
--var="http_token=${{ secrets.MCP_HTTP_TOKEN }}" \
--var="db_host=${{ secrets.MCP_DB_HOST }}" \
--var="db_port=${{ secrets.MCP_DB_PORT }}" \
--var="db_user=${{ secrets.MCP_DB_USER }}" \
--var="db_password=${{ secrets.MCP_DB_PASSWORD }}" \
--var="db_name=${{ secrets.MCP_DB_NAME }}" \
--var="use_cloudfront=${{ inputs.use_cloudfront }}" \
-|| code=$?; echo plan_exit=$code; [ "$code" = "2" ] || [ "$code" = "0" ] || exit $code
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
 
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-- name: Apply
-working-directory: infra
-run: |
-terraform apply -auto-approve \
--var="aws_region=${{ env.AWS_REGION }}" \
--var="account_id=${{ env.AWS_ACCOUNT_ID }}" \
--var="http_token=${{ secrets.MCP_HTTP_TOKEN }}" \
--var="db_host=${{ secrets.MCP_DB_HOST }}" \
--var="db_port=${{ secrets.MCP_DB_PORT }}" \
--var="db_user=${{ secrets.MCP_DB_USER }}" \
--var="db_password=${{ secrets.MCP_DB_PASSWORD }}" \
--var="db_name=${{ secrets.MCP_DB_NAME }}" \
--var="use_cloudfront=${{ inputs.use_cloudfront }}"
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: vertica-mcp-apply
 
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
 
-- name: Capture TF outputs
-id: out
-working-directory: infra
-run: |
-echo "mcp_health=$(terraform output -raw mcp_health)" >> $GITHUB_OUTPUT
-cf=$(terraform output -raw cloudfront_domain || true)
-echo "cloudfront_domain=$cf" >> $GITHUB_OUTPUT
+      - name: Bootstrap Terraform backend
+        working-directory: infra
+        run: ./backend-bootstrap.sh
 
+      - name: Terraform init
+        working-directory: infra
+        run: terraform init -upgrade
 
-- name: Publish MCP outputs (summary + artifact + SSM Param)
-run: |
-DIRECT="$(terraform -chdir=infra output -raw mcp_endpoint)"
-CF="${{ steps.out.outputs.cloudfront_domain }}"
-ENDPOINT="$DIRECT"; [ -n "$CF" ] && ENDPOINT="https://$CF/"
-DB_PORT="${{ secrets.MCP_DB_PORT }}"; [ -z "$DB_PORT" ] && DB_PORT=5433
-cat > mcp_outputs.json <<JSON
+      - name: Import existing resources (if present)
+        working-directory: infra
+        run: bash import-if-exists.sh || true
+
+      - name: Optional destroy (recreate)
+        if: ${{ inputs.recreate }}
+        working-directory: infra
+        run: terraform destroy -auto-approve || true
+
+      - name: Validate & Plan (detailed exit code)
+        id: plan
+        working-directory: infra
+        run: |
+          set -eo pipefail
+          terraform validate
+          DB_HOST="${{ secrets.MCP_DB_HOST }}"
+          if [ -z "$DB_HOST" ]; then
+            DB_HOST="127.0.0.1"
+          fi
+          DB_PORT="${{ secrets.MCP_DB_PORT }}"
+          if [ -z "$DB_PORT" ]; then
+            DB_PORT=5433
+          fi
+          set +e
+          terraform plan -detailed-exitcode \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="account_id=${{ env.AWS_ACCOUNT_ID }}" \
+            -var="http_token=${{ secrets.MCP_HTTP_TOKEN }}" \
+            -var="db_host=${DB_HOST}" \
+            -var="db_port=${DB_PORT}" \
+            -var="db_user=${{ secrets.MCP_DB_USER }}" \
+            -var="db_password=${{ secrets.MCP_DB_PASSWORD }}" \
+            -var="db_name=${{ secrets.MCP_DB_NAME }}" \
+            -var="use_cloudfront=${{ inputs.use_cloudfront }}"
+          code=$?
+          set -e
+          echo "plan_exit=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" -ne 0 ] && [ "$code" -ne 2 ]; then
+            exit "$code"
+          fi
+
+      - name: Apply
+        working-directory: infra
+        run: |
+          DB_HOST="${{ secrets.MCP_DB_HOST }}"
+          if [ -z "$DB_HOST" ]; then
+            DB_HOST="127.0.0.1"
+          fi
+          DB_PORT="${{ secrets.MCP_DB_PORT }}"
+          if [ -z "$DB_PORT" ]; then
+            DB_PORT=5433
+          fi
+          terraform apply -auto-approve \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="account_id=${{ env.AWS_ACCOUNT_ID }}" \
+            -var="http_token=${{ secrets.MCP_HTTP_TOKEN }}" \
+            -var="db_host=${DB_HOST}" \
+            -var="db_port=${DB_PORT}" \
+            -var="db_user=${{ secrets.MCP_DB_USER }}" \
+            -var="db_password=${{ secrets.MCP_DB_PASSWORD }}" \
+            -var="db_name=${{ secrets.MCP_DB_NAME }}" \
+            -var="use_cloudfront=${{ inputs.use_cloudfront }}"
+
+      - name: Capture TF outputs
+        id: out
+        working-directory: infra
+        run: |
+          set -euo pipefail
+          echo "mcp_endpoint=$(terraform output -raw mcp_endpoint)" >> "$GITHUB_OUTPUT"
+          echo "mcp_health=$(terraform output -raw mcp_health)" >> "$GITHUB_OUTPUT"
+          echo "mcp_sse=$(terraform output -raw mcp_sse)" >> "$GITHUB_OUTPUT"
+          if terraform output -raw cloudfront_domain >/tmp/cloudfront 2>/dev/null; then
+            echo "cloudfront_domain=$(cat /tmp/cloudfront)" >> "$GITHUB_OUTPUT"
+          else
+            echo "cloudfront_domain=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish MCP outputs (summary + artifact + SSM Param)
+        env:
+          SSM_PARAMETER_NAME: ${{ secrets.MCP_SSM_PARAMETER_NAME }}
+        run: |
+          set -euo pipefail
+          DIRECT="$(terraform -chdir=infra output -raw mcp_endpoint)"
+          CF="${{ steps.out.outputs.cloudfront_domain }}"
+          ENDPOINT="$DIRECT"
+          if [ -n "$CF" ]; then
+            ENDPOINT="https://$CF/"
+          fi
+          DB_HOST="${{ secrets.MCP_DB_HOST }}"
+          if [ -z "$DB_HOST" ]; then
+            DB_HOST="127.0.0.1"
+          fi
+          DB_PORT="${{ secrets.MCP_DB_PORT }}"
+          if [ -z "$DB_PORT" ]; then
+            DB_PORT=5433
+          fi
+          cat > mcp_outputs.json <<JSON
 {
-"mcp_endpoint_url": "${ENDPOINT}",
-"mcp_health_url": "${ENDPOINT}healthz",
-"mcp_sse_url": "${ENDPOINT}sse",
-"mcp_auth_header": "Bearer ${{ secrets.MCP_HTTP_TOKEN }}",
-"db_host": "${{ secrets.MCP_DB_HOST || '127.0.0.1' }}",
-"db_port": ${DB_PORT},
+  "mcp_endpoint_url": "${ENDPOINT}",
+  "mcp_health_url": "${ENDPOINT}healthz",
+  "mcp_sse_url": "${ENDPOINT}sse",
+  "mcp_auth_header": "Bearer ${{ secrets.MCP_HTTP_TOKEN }}",
+  "db_host": "${DB_HOST}",
+  "db_port": ${DB_PORT},
+  "db_user": "${{ secrets.MCP_DB_USER }}",
+  "db_password": "${{ secrets.MCP_DB_PASSWORD }}",
+  "db_name": "${{ secrets.MCP_DB_NAME }}"
+}
+JSON
+          echo '### MCP deployment outputs' >> "$GITHUB_STEP_SUMMARY"
+          echo '\n```json' >> "$GITHUB_STEP_SUMMARY"
+          cat mcp_outputs.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$SSM_PARAMETER_NAME" ]; then
+            aws ssm put-parameter --name "$SSM_PARAMETER_NAME" --type SecureString --value "$(cat mcp_outputs.json)" --overwrite
+          fi
+
+      - name: Upload MCP outputs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-outputs
+          path: mcp_outputs.json
