@@ -147,19 +147,25 @@ jobs:
           if [ -z "$DB_PORT" ]; then
             DB_PORT=5433
           fi
-          cat > mcp_outputs.json <<JSON
-{
-  "mcp_endpoint_url": "${ENDPOINT}",
-  "mcp_health_url": "${ENDPOINT}healthz",
-  "mcp_sse_url": "${ENDPOINT}sse",
-  "mcp_auth_header": "Bearer ${{ secrets.MCP_HTTP_TOKEN }}",
-  "db_host": "${DB_HOST}",
-  "db_port": ${DB_PORT},
-  "db_user": "${{ secrets.MCP_DB_USER }}",
-  "db_password": "${{ secrets.MCP_DB_PASSWORD }}",
-  "db_name": "${{ secrets.MCP_DB_NAME }}"
-}
-JSON
+          jq -n \
+            --arg endpoint "$ENDPOINT" \
+            --arg http_token "${{ secrets.MCP_HTTP_TOKEN }}" \
+            --arg db_host "$DB_HOST" \
+            --arg db_user "${{ secrets.MCP_DB_USER }}" \
+            --arg db_password "${{ secrets.MCP_DB_PASSWORD }}" \
+            --arg db_name "${{ secrets.MCP_DB_NAME }}" \
+            --argjson db_port "$DB_PORT" \
+            '{
+              mcp_endpoint_url: $endpoint,
+              mcp_health_url: ($endpoint + "healthz"),
+              mcp_sse_url: ($endpoint + "sse"),
+              mcp_auth_header: ("Bearer " + $http_token),
+              db_host: $db_host,
+              db_port: $db_port,
+              db_user: $db_user,
+              db_password: $db_password,
+              db_name: $db_name
+            }' > mcp_outputs.json
           echo '### MCP deployment outputs' >> "$GITHUB_STEP_SUMMARY"
           echo '\n```json' >> "$GITHUB_STEP_SUMMARY"
           cat mcp_outputs.json >> "$GITHUB_STEP_SUMMARY"
