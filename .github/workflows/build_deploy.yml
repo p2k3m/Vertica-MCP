@@ -1,0 +1,65 @@
+name: Build & Deploy MCP (apply)
+run: bash import-if-exists.sh || true
+
+
+- name: Optional destroy (recreate)
+if: ${{ inputs.recreate }}
+working-directory: infra
+run: terraform destroy -auto-approve || true
+
+
+- name: Validate & Plan (detailed exit code)
+working-directory: infra
+run: |
+terraform validate
+terraform plan -detailed-exitcode \
+-var="aws_region=${{ env.AWS_REGION }}" \
+-var="account_id=${{ env.AWS_ACCOUNT_ID }}" \
+-var="http_token=${{ secrets.MCP_HTTP_TOKEN }}" \
+-var="db_host=${{ secrets.MCP_DB_HOST }}" \
+-var="db_port=${{ secrets.MCP_DB_PORT }}" \
+-var="db_user=${{ secrets.MCP_DB_USER }}" \
+-var="db_password=${{ secrets.MCP_DB_PASSWORD }}" \
+-var="db_name=${{ secrets.MCP_DB_NAME }}" \
+-var="use_cloudfront=${{ inputs.use_cloudfront }}" \
+|| code=$?; echo plan_exit=$code; [ "$code" = "2" ] || [ "$code" = "0" ] || exit $code
+
+
+- name: Apply
+working-directory: infra
+run: |
+terraform apply -auto-approve \
+-var="aws_region=${{ env.AWS_REGION }}" \
+-var="account_id=${{ env.AWS_ACCOUNT_ID }}" \
+-var="http_token=${{ secrets.MCP_HTTP_TOKEN }}" \
+-var="db_host=${{ secrets.MCP_DB_HOST }}" \
+-var="db_port=${{ secrets.MCP_DB_PORT }}" \
+-var="db_user=${{ secrets.MCP_DB_USER }}" \
+-var="db_password=${{ secrets.MCP_DB_PASSWORD }}" \
+-var="db_name=${{ secrets.MCP_DB_NAME }}" \
+-var="use_cloudfront=${{ inputs.use_cloudfront }}"
+
+
+- name: Capture TF outputs
+id: out
+working-directory: infra
+run: |
+echo "mcp_health=$(terraform output -raw mcp_health)" >> $GITHUB_OUTPUT
+cf=$(terraform output -raw cloudfront_domain || true)
+echo "cloudfront_domain=$cf" >> $GITHUB_OUTPUT
+
+
+- name: Publish MCP outputs (summary + artifact + SSM Param)
+run: |
+DIRECT="$(terraform -chdir=infra output -raw mcp_endpoint)"
+CF="${{ steps.out.outputs.cloudfront_domain }}"
+ENDPOINT="$DIRECT"; [ -n "$CF" ] && ENDPOINT="https://$CF/"
+DB_PORT="${{ secrets.MCP_DB_PORT }}"; [ -z "$DB_PORT" ] && DB_PORT=5433
+cat > mcp_outputs.json <<JSON
+{
+"mcp_endpoint_url": "${ENDPOINT}",
+"mcp_health_url": "${ENDPOINT}healthz",
+"mcp_sse_url": "${ENDPOINT}sse",
+"mcp_auth_header": "Bearer ${{ secrets.MCP_HTTP_TOKEN }}",
+"db_host": "${{ secrets.MCP_DB_HOST || '127.0.0.1' }}",
+"db_port": ${DB_PORT},
