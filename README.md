@@ -1,0 +1,2 @@
+# Vertica-MCP
+Vertica‑MCP
