@@ -1,6 +1,9 @@
 name: Build & Deploy MCP (apply)
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       recreate:
@@ -31,12 +34,55 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Fail-fast prerequisites
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          MCP_DB_NAME: ${{ secrets.MCP_DB_NAME }}
+          MCP_DB_USER: ${{ secrets.MCP_DB_USER }}
+          MCP_DB_PASSWORD: ${{ secrets.MCP_DB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for var in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION AWS_ACCOUNT_ID MCP_DB_NAME MCP_DB_USER; do
+            if [ -z "${!var:-}" ]; then
+              missing+=("$var")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "Missing required GitHub secrets: ${missing[*]}" >&2
+            exit 1
+          fi
+
+          aws sts get-caller-identity >/dev/null
+
+          INSTANCE_IDS=$(aws ec2 describe-instances \
+            --filters Name=tag:Project,Values=vertica-db Name=instance-state-name,Values=running \
+            --query 'Reservations[].Instances[].InstanceId' --output text)
+          if [ -z "$INSTANCE_IDS" ] || [ "$INSTANCE_IDS" = "None" ]; then
+            echo "No running EC2 instance tagged Project=vertica-db is available." >&2
+            exit 1
+          fi
+
+          PING_STATUS=$(aws ssm describe-instance-information \
+            --filters Key=tag:Project,Values=vertica-db \
+            --query 'InstanceInformationList[0].PingStatus' --output text)
+          if [ -z "$PING_STATUS" ] || [ "$PING_STATUS" = "None" ] || [ "$PING_STATUS" != "Online" ]; then
+            echo "Vertica host is not reachable via SSM (PingStatus=$PING_STATUS)." >&2
+            exit 1
+          fi
+
+          echo "Vertica instance(s) $INSTANCE_IDS reachable via SSM (PingStatus=$PING_STATUS)."
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-          role-session-name: vertica-mcp-apply
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
