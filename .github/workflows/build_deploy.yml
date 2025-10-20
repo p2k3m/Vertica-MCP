@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'src/**'
+      - 'sql/**'
+      - 'infra/**'
+      - 'Dockerfile'
+      - 'pyproject.toml'
+      - '.github/workflows/build_deploy.yml'
   workflow_dispatch:
     inputs:
       recreate:

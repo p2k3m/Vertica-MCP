@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 
 import pytest
@@ -48,3 +49,19 @@ def test_search_schema_objects_uses_ranked_multi(monkeypatch: pytest.MonkeyPatch
     assert result["results"] == [{"name": "foo", "score": 0.9}]
     assert len(result["provenance"]) == 2
     assert {p["sql_or_view"] for p in result["provenance"]} == {"tables", "columns"}
+
+
+def test_execute_query_rejects_non_select():
+    result = asyncio.run(
+        tools.execute_query(None, tools.RawSelect(query="UPDATE foo SET bar = 1"))
+    )
+
+    assert "Only SELECT" in result["error"]
+
+
+def test_execute_query_requires_templated_tool():
+    result = asyncio.run(
+        tools.execute_query(None, tools.RawSelect(query="SELECT * FROM something"))
+    )
+
+    assert "templated" in result["error"]
