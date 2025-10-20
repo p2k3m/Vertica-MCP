@@ -14,7 +14,6 @@ provider "aws" {
 }
 
 locals {
-  db_instance_id        = var.db_instance_id
   container_repository  = "${var.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
   container_image       = "${local.container_repository}/vertica-mcp:latest"
   service_unit_contents = <<-UNIT
@@ -49,8 +48,37 @@ locals {
   ])
 }
 
+data "aws_instances" "db_from_name" {
+  count = var.db_instance_name == null ? 0 : 1
+
+  filter {
+    name   = "tag:Name"
+    values = [var.db_instance_name]
+  }
+}
+
+locals {
+  db_instance_id_candidates = compact([
+    try(var.db_instance_id, null),
+    try(data.aws_instances.db_from_name[0].ids[0], null),
+  ])
+  db_instance_id = try(local.db_instance_id_candidates[0], null)
+}
+
+resource "terraform_data" "db_instance_id_validation" {
+  lifecycle {
+    precondition {
+      condition     = local.db_instance_id != null && local.db_instance_id != ""
+      error_message = "Set either var.db_instance_id or var.db_instance_name to identify the EC2 instance that runs Vertica MCP."
+    }
+  }
+}
+
 data "aws_instance" "dbi" {
+  count       = local.db_instance_id == null ? 0 : 1
   instance_id = local.db_instance_id
+
+  depends_on = [terraform_data.db_instance_id_validation]
 }
 
 resource "aws_ssm_document" "mcp_run" {
@@ -89,7 +117,10 @@ resource "aws_ssm_association" "mcp_assoc" {
     values = [local.db_instance_id]
   }
 
-  depends_on = [aws_ssm_document.mcp_run]
+  depends_on = [
+    aws_ssm_document.mcp_run,
+    terraform_data.db_instance_id_validation,
+  ]
 }
 
 # Optional: CloudFront HTTPS in front of EC2:8000
@@ -145,7 +176,7 @@ resource "aws_cloudfront_distribution" "mcp" {
   comment = "MCP over CloudFront"
 
   origin {
-    domain_name = data.aws_instance.dbi.public_dns
+    domain_name = data.aws_instance.dbi[0].public_dns
     origin_id   = "ec2-origin"
 
     custom_origin_config {
@@ -185,19 +216,19 @@ output "db_instance_id" {
 }
 
 output "db_public_ip" {
-  value = data.aws_instance.dbi.public_ip
+  value = data.aws_instance.dbi[0].public_ip
 }
 
 output "mcp_endpoint" {
-  value = "http://${data.aws_instance.dbi.public_ip}:8000/"
+  value = "http://${data.aws_instance.dbi[0].public_ip}:8000/"
 }
 
 output "mcp_health" {
-  value = "http://${data.aws_instance.dbi.public_ip}:8000/healthz"
+  value = "http://${data.aws_instance.dbi[0].public_ip}:8000/healthz"
 }
 
 output "mcp_sse" {
-  value = "http://${data.aws_instance.dbi.public_ip}:8000/sse"
+  value = "http://${data.aws_instance.dbi[0].public_ip}:8000/sse"
 }
 
 output "cloudfront_domain" {
