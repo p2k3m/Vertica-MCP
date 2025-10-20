@@ -215,6 +215,22 @@ PY
   rm -f "${tmp_file}"
 }
 
+update_readme_from_outputs() {
+  local tmp_file
+  tmp_file=$(mktemp)
+
+  if ! terraform output -json >"${tmp_file}" 2>/dev/null; then
+    rm -f "${tmp_file}"
+    return
+  fi
+
+  if ! python3 "${SCRIPT_DIR}/update_readme.py" --readme "${REPO_ROOT}/README.md" --outputs-json "${tmp_file}"; then
+    echo "Warning: failed to update README endpoints from Terraform outputs." >&2
+  fi
+
+  rm -f "${tmp_file}"
+}
+
 export_tf_vars_from_extra_args() {
   EXPORTED_TF_VARS=()
 
@@ -270,6 +286,7 @@ run_command() {
       fi
       cleanup_exported_tf_vars
       write_a2a_artifact
+      update_readme_from_outputs
       ;;
     destroy)
       export_tf_vars_from_extra_args
