@@ -47,6 +47,6 @@ variable "db_name" {
 }
 
 variable "use_cloudfront" {
-  type    = bool
+  type    = any
   default = false
 }
