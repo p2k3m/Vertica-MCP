@@ -278,11 +278,11 @@ async def _startup_validation() -> None:
 
     result = _database_check()
     if not result.get("ok"):
-        logger.error(
-            "Initial Vertica connectivity check failed: %s",
+        logger.warning(
+            "Initial Vertica connectivity check failed: %s -- continuing in degraded mode",
             result.get("error", "unknown"),
         )
-        raise RuntimeError("Vertica connectivity check failed during startup")
+        return
 
     logger.info(
         "Initial Vertica connectivity check succeeded in %sms",
