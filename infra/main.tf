@@ -13,7 +13,24 @@ provider "aws" {
   region = var.aws_region
 }
 
+data "external" "existing_ecr_repository" {
+  program = ["python3", "${path.module}/check-ecr.py"]
+
+  query = {
+    name   = "vertica-mcp"
+    region = var.aws_region
+  }
+}
+
+locals {
+  ecr_lookup_result     = data.external.existing_ecr_repository.result
+  ecr_repository_exists = try(tobool(local.ecr_lookup_result.exists), false)
+  ecr_registry_id       = local.ecr_repository_exists ? local.ecr_lookup_result.registry_id : var.account_id
+  ecr_repository_url    = local.ecr_repository_exists ? local.ecr_lookup_result.repository_url : one(aws_ecr_repository.vertica_mcp[*].repository_url)
+}
+
 resource "aws_ecr_repository" "vertica_mcp" {
+  count                = local.ecr_repository_exists ? 0 : 1
   name                 = "vertica-mcp"
   image_tag_mutability = "MUTABLE"
 
@@ -27,8 +44,8 @@ resource "aws_ecr_repository" "vertica_mcp" {
 }
 
 locals {
-  container_repository = "${var.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
-  container_image_name = aws_ecr_repository.vertica_mcp.repository_url
+  container_repository = "${local.ecr_registry_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
+  container_image_name = local.ecr_repository_url
   container_image_tag  = trimspace(var.image_tag) == "" ? "latest" : trimspace(var.image_tag)
   container_image      = "${local.container_image_name}:${local.container_image_tag}"
   service_unit_contents = <<-UNIT
