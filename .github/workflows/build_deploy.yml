@@ -199,11 +199,29 @@ jobs:
           elif [ "$RECREATE_INPUT" = "true" ]; then
             RECREATE_FLAG="--recreate"
           fi
+          TF_CMD=("./terraform.sh")
           if [ -n "$RECREATE_FLAG" ]; then
-            ./terraform.sh "$RECREATE_FLAG" apply -- "${TF_ARGS[@]}"
-          else
-            ./terraform.sh apply -- "${TF_ARGS[@]}" -auto-approve
+            TF_CMD+=("$RECREATE_FLAG")
           fi
+          TF_CMD+=("apply" "--")
+          TF_CMD+=("${TF_ARGS[@]}")
+          if [ -z "$RECREATE_FLAG" ]; then
+            TF_CMD+=("-auto-approve")
+          fi
+
+          LOG_PATH="$RUNNER_TEMP/terraform-apply.log"
+          echo "Terraform apply logs will be stored at $LOG_PATH"
+          echo "::group::Terraform apply"
+          set +e
+          "${TF_CMD[@]}" |& tee "$LOG_PATH"
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "::endgroup::"
+          if [ "$status" -ne 0 ]; then
+            echo "::error::Terraform apply failed. Review the logs above." >&2
+            exit "$status"
+          fi
+          echo "Terraform apply completed successfully. Logs archived at $LOG_PATH"
 
       - name: Capture TF outputs
         id: out

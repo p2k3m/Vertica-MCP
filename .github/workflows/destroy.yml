@@ -90,4 +90,16 @@ jobs:
             "-var=db_name=${DB_NAME}"
             "-var=use_cloudfront=$USE_CLOUDFRONT"
           )
-          ./terraform.sh destroy -- "${TF_ARGS[@]}" -auto-approve
+          LOG_PATH="$RUNNER_TEMP/terraform-destroy.log"
+          echo "Terraform destroy logs will be stored at $LOG_PATH"
+          echo "::group::Terraform destroy"
+          set +e
+          ./terraform.sh destroy -- "${TF_ARGS[@]}" -auto-approve |& tee "$LOG_PATH"
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "::endgroup::"
+          if [ "$status" -ne 0 ]; then
+            echo "::error::Terraform destroy failed. Review the logs above." >&2
+            exit "$status"
+          fi
+          echo "Terraform destroy completed successfully. Logs archived at $LOG_PATH"
