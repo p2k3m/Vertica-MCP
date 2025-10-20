@@ -1,4 +1,5 @@
 terraform {
+  backend "s3" {}
 ExecStartPre=/usr/bin/aws ecr get-login-password --region ${var.aws_region} | /usr/bin/docker login --username AWS --password-stdin ${var.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com
 ExecStartPre=/usr/bin/docker pull $IMG
 ExecStartPre=/usr/bin/docker rm -f mcp || true
