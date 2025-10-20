@@ -278,6 +278,7 @@ jobs:
             DB_PORT=5433
           fi
           jq -n \
+            --arg direct "$DIRECT" \
             --arg endpoint "$ENDPOINT" \
             --arg http_token "${{ secrets.MCP_HTTP_TOKEN }}" \
             --arg db_host "$DB_HOST" \
@@ -286,7 +287,7 @@ jobs:
             --arg db_name "${{ secrets.MCP_DB_NAME }}" \
             --argjson db_port "$DB_PORT" \
             '{
-              mcp_http_endpoint_url: $DIRECT,
+              mcp_http_endpoint_url: $direct,
               mcp_http_health_url: "${{ steps.out.outputs.mcp_health }}",
               mcp_http_sse_url: "${{ steps.out.outputs.mcp_sse }}",
               mcp_public_ip: "${{ steps.out.outputs.mcp_public_ip }}",
