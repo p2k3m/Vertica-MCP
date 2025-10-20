@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import platform
 import time
@@ -7,7 +8,7 @@ from contextlib import suppress
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Query, Request, HTTPException
 from pydantic import BaseModel, Field
 
 from . import pool as pool_module
@@ -19,6 +20,8 @@ try:  # pragma: no cover - importlib.metadata always present on modern Python
 except ImportError:  # pragma: no cover
     from importlib_metadata import PackageNotFoundError, version
 
+
+logger = logging.getLogger("mcp_vertica.server")
 
 app = FastAPI()
 
@@ -173,8 +176,18 @@ class QueryRequest(BaseModel):
 
 
 @app.get("/healthz")
-async def healthz():
-    checks = {"database": _database_check()}
+async def healthz(ping_vertica: bool = Query(False, alias="ping-vertica")):
+    if ping_vertica:
+        checks = {"database": _database_check()}
+    else:
+        checks = {
+            "database": {
+                "ok": True,
+                "skipped": True,
+                "message": "Set ping-vertica=true to run a live Vertica query",
+            }
+        }
+
     ok = all(check.get("ok") for check in checks.values())
     diagnostics = {
         "runtime": _runtime_diagnostics(),
@@ -212,3 +225,27 @@ async def bearer(request: Request, call_next):
 
 app.mount("/api", mcp.streamable_http_app())
 app.mount("/sse", mcp.sse_app())
+
+
+@app.on_event("startup")
+async def _startup_validation() -> None:
+    logger.info(
+        "Starting Vertica MCP targeting %s:%s/%s as %s",
+        settings.host,
+        settings.port,
+        settings.database,
+        settings.user,
+    )
+
+    result = _database_check()
+    if not result.get("ok"):
+        logger.error(
+            "Initial Vertica connectivity check failed: %s",
+            result.get("error", "unknown"),
+        )
+        raise RuntimeError("Vertica connectivity check failed during startup")
+
+    logger.info(
+        "Initial Vertica connectivity check succeeded in %sms",
+        result.get("latency_ms", "?"),
+    )

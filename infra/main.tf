@@ -50,11 +50,38 @@ resource "aws_ecr_repository" "vertica_mcp" {
 }
 
 locals {
-  container_repository = "${local.ecr_registry_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
-  container_image_name = local.ecr_repository_url
-  container_image_tag  = trimspace(var.image_tag) == "" ? "latest" : trimspace(var.image_tag)
-  container_image      = "${local.container_image_name}:${local.container_image_tag}"
-  service_unit_contents = <<-UNIT
+  container_repository      = "${local.ecr_registry_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
+  container_image_name      = local.ecr_repository_url
+  container_image_tag       = trimspace(var.image_tag) == "" ? "latest" : trimspace(var.image_tag)
+  container_image           = "${local.container_image_name}:${local.container_image_tag}"
+  mcp_instance_name         = "MCP-Vertica"
+  mcp_env_file_path         = "/etc/mcp.env"
+  mcp_env_file_contents     = trimspace(<<-ENV)
+DB_HOST=${var.db_host}
+DB_PORT=${var.db_port}
+DB_USER=${var.db_user}
+DB_PASSWORD=${var.db_password}
+DB_NAME=${var.db_name}
+MCP_HTTP_TOKEN=${var.http_token}
+ENV
+  mcp_env_file_base64       = base64encode(local.mcp_env_file_contents)
+  mcp_bootstrap_user_data   = <<-USERDATA
+    #!/bin/bash
+    set -euxo pipefail
+
+    echo "[mcp] Bootstrapping MCP host" | tee /var/log/mcp-bootstrap.log
+    dnf update -y
+    dnf install -y docker python3 python3-pip awscli jq
+    systemctl enable --now docker
+    usermod -aG docker ec2-user || true
+
+    echo '${local.mcp_env_file_base64}' | base64 -d >${local.mcp_env_file_path}
+    chmod 600 ${local.mcp_env_file_path}
+    chown root:root ${local.mcp_env_file_path}
+
+    printf 'Bootstrap completed at %s\n' "$(date --iso-8601=seconds)" >>/var/log/mcp-bootstrap.log
+  USERDATA
+  service_unit_contents     = <<-UNIT
     [Unit]
     Description=Vertica MCP service
     After=docker.service
@@ -62,81 +89,214 @@ locals {
 
     [Service]
     Type=simple
-    Environment=DB_HOST=${var.db_host}
-    Environment=DB_PORT=${var.db_port}
-    Environment=DB_USER=${var.db_user}
-    Environment=DB_PASSWORD=${var.db_password}
-    Environment=DB_NAME=${var.db_name}
-    Environment=MCP_HTTP_TOKEN=${var.http_token}
+    EnvironmentFile=${local.mcp_env_file_path}
     Restart=always
     RestartSec=5
     ExecStartPre=/usr/bin/aws ecr get-login-password --region ${var.aws_region} | /usr/bin/docker login --username AWS --password-stdin ${local.container_repository}
+    ExecStartPre=/bin/grep -Eq '^DB_HOST=.+' ${local.mcp_env_file_path}
+    ExecStartPre=/bin/grep -Eq '^DB_PORT=.+' ${local.mcp_env_file_path}
+    ExecStartPre=/bin/grep -Eq '^DB_USER=.+' ${local.mcp_env_file_path}
+    ExecStartPre=/bin/grep -Eq '^DB_PASSWORD=.+' ${local.mcp_env_file_path}
+    ExecStartPre=/bin/grep -Eq '^DB_NAME=.+' ${local.mcp_env_file_path}
     ExecStartPre=/usr/bin/docker pull ${local.container_image}
     ExecStartPre=/usr/bin/docker rm -f mcp || true
-    ExecStart=/usr/bin/docker run --name mcp -p 8000:8000 --restart unless-stopped -e DB_HOST -e DB_PORT -e DB_USER -e DB_PASSWORD -e DB_NAME -e MCP_HTTP_TOKEN ${local.container_image}
+    ExecStart=/usr/bin/docker run --name mcp -p 8000:8000 --restart unless-stopped --env-file ${local.mcp_env_file_path} ${local.container_image}
     ExecStop=/usr/bin/docker stop mcp
+    StandardOutput=journal
+    StandardError=journal
 
     [Install]
     WantedBy=multi-user.target
   UNIT
-  service_unit_command = join("\n", [
+  service_unit_command      = join("\n", [
     "cat <<UNIT >/etc/systemd/system/mcp.service",
     trimspace(local.service_unit_contents),
     "UNIT",
   ])
+  use_cloudfront_input      = try(trimspace(tostring(var.use_cloudfront)), "")
+  use_cloudfront            = local.use_cloudfront_input != "" && contains(["1", "true", "yes", "y"], lower(local.use_cloudfront_input))
 }
 
 locals {
-  use_cloudfront_input = try(trimspace(tostring(var.use_cloudfront)), "")
-  use_cloudfront       = local.use_cloudfront_input != "" && contains(["1", "true", "yes", "y"], lower(local.use_cloudfront_input))
+  requested_subnet_id = trimspace(coalesce(var.mcp_subnet_id, ""))
 }
 
-data "aws_instances" "db_from_name" {
-  count = var.db_instance_name == null ? 0 : 1
+data "aws_subnet" "requested" {
+  count = local.requested_subnet_id != "" ? 1 : 0
+  id    = local.requested_subnet_id
+}
 
-  filter {
-    name   = "tag:Name"
-    values = [var.db_instance_name]
+data "aws_vpc" "default" {
+  count   = local.requested_subnet_id == "" ? 1 : 0
+  default = true
+}
+
+data "aws_subnet_ids" "default" {
+  count  = local.requested_subnet_id == "" ? 1 : 0
+  vpc_id = data.aws_vpc.default[0].id
+}
+
+locals {
+  mcp_subnet_id = local.requested_subnet_id != "" ? local.requested_subnet_id : data.aws_subnet_ids.default[0].ids[0]
+}
+
+data "aws_subnet" "selected" {
+  id = local.mcp_subnet_id
+}
+
+locals {
+  mcp_vpc_id = data.aws_subnet.selected.vpc_id
+}
+
+resource "aws_security_group" "mcp" {
+  name        = "mcp-vertica"
+  description = "Security group for the Vertica MCP service"
+  vpc_id      = local.mcp_vpc_id
+
+  ingress {
+    description = "Allow MCP HTTP traffic"
+    from_port   = 8000
+    to_port     = 8000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
+  ingress {
+    description = "Allow ICMP for diagnostics"
+    from_port   = -1
+    to_port     = -1
+    protocol    = "icmp"
+    cidr_blocks = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
+  tags = {
+    Name        = local.mcp_instance_name
+    Service     = "Vertica-MCP"
+    Environment = "production"
   }
 }
 
-locals {
-  db_instance_id_candidates = compact([
-    try(var.db_instance_id, null),
-    try(data.aws_instances.db_from_name[0].ids[0], null),
-  ])
-  db_instance_id = try(local.db_instance_id_candidates[0], null)
-  association_targets = local.db_instance_id == null ? [] : [local.db_instance_id]
+resource "aws_security_group_rule" "allow_mcp_to_vertica" {
+  count                    = var.vertica_security_group_id == null ? 0 : 1
+  type                     = "ingress"
+  from_port                = 5433
+  to_port                  = 5433
+  protocol                 = "tcp"
+  security_group_id        = var.vertica_security_group_id
+  source_security_group_id = aws_security_group.mcp.id
+  description              = "Allow MCP server to reach Vertica database"
+}
+
+data "aws_ssm_parameter" "al2023" {
+  name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
+}
+
+resource "aws_iam_role" "mcp" {
+  name = "mcp-vertica-instance-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = "sts:AssumeRole"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = {
+    Name    = "mcp-vertica-instance-role"
+    Service = "Vertica-MCP"
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "ssm" {
+  role       = aws_iam_role.mcp.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_role_policy_attachment" "ecr" {
+  role       = aws_iam_role.mcp.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+}
+
+resource "aws_iam_instance_profile" "mcp" {
+  name = "mcp-vertica-instance-profile"
+  role = aws_iam_role.mcp.name
+}
+
+resource "aws_instance" "mcp" {
+  ami                    = data.aws_ssm_parameter.al2023.value
+  instance_type          = var.mcp_instance_type
+  subnet_id              = local.mcp_subnet_id
+  associate_public_ip_address = true
+  iam_instance_profile   = aws_iam_instance_profile.mcp.name
+  user_data              = local.mcp_bootstrap_user_data
+  user_data_replace_on_change = false
+
+  vpc_security_group_ids = concat([aws_security_group.mcp.id], var.mcp_additional_security_group_ids)
+
+  metadata_options {
+    http_endpoint = "enabled"
+    http_tokens   = "required"
+  }
+
+  root_block_device {
+    volume_type = "gp3"
+    volume_size = 16
+    encrypted   = true
+  }
+
+  tags = {
+    Name        = local.mcp_instance_name
+    Service     = "Vertica-MCP"
+    Environment = "production"
+  }
+
+  depends_on = [aws_security_group_rule.allow_mcp_to_vertica]
 }
 
 locals {
-  mcp_public_ip       = local.db_instance_id == null ? "" : try(data.aws_instance.dbi[0].public_ip, "")
-  mcp_http_base       = local.mcp_public_ip == "" ? "" : "http://${local.mcp_public_ip}:8000"
-  mcp_http_endpoint   = local.mcp_http_base == "" ? null : "${local.mcp_http_base}/"
-  mcp_http_healthz    = local.mcp_http_base == "" ? null : "${local.mcp_http_base}/healthz"
-  mcp_http_sse        = local.mcp_http_base == "" ? null : "${local.mcp_http_base}/sse"
-  mcp_https_endpoint  = length(aws_cloudfront_distribution.mcp) > 0 ? "https://${aws_cloudfront_distribution.mcp[0].domain_name}/" : null
-  mcp_https_sse       = length(aws_cloudfront_distribution.mcp) > 0 ? "https://${aws_cloudfront_distribution.mcp[0].domain_name}/sse" : null
-  http_token_trimmed  = trimspace(var.http_token)
-  mcp_auth_header     = local.http_token_trimmed == "" ? null : {
+  mcp_public_ip      = try(aws_instance.mcp.public_ip, "")
+  mcp_http_base      = local.mcp_public_ip == "" ? "" : "http://${local.mcp_public_ip}:8000"
+  mcp_http_endpoint  = local.mcp_http_base == "" ? null : "${local.mcp_http_base}/"
+  mcp_http_healthz   = local.mcp_http_base == "" ? null : "${local.mcp_http_base}/healthz"
+  mcp_http_sse       = local.mcp_http_base == "" ? null : "${local.mcp_http_base}/sse"
+  mcp_https_endpoint = length(aws_cloudfront_distribution.mcp) > 0 ? "https://${aws_cloudfront_distribution.mcp[0].domain_name}/" : null
+  mcp_https_sse      = length(aws_cloudfront_distribution.mcp) > 0 ? "https://${aws_cloudfront_distribution.mcp[0].domain_name}/sse" : null
+  http_token_trimmed = trimspace(var.http_token)
+  mcp_auth_header    = local.http_token_trimmed == "" ? null : {
     header = "Authorization"
     value  = "Bearer ${local.http_token_trimmed}"
     token  = local.http_token_trimmed
   }
   db_env_snippet = {
-    DB_HOST = var.db_host
-    DB_PORT = tostring(var.db_port)
-    DB_USER = var.db_user
+    DB_HOST     = var.db_host
+    DB_PORT     = tostring(var.db_port)
+    DB_USER     = var.db_user
     DB_PASSWORD = var.db_password
-    DB_NAME = var.db_name
+    DB_NAME     = var.db_name
   }
   db_snippet = {
-    host          = var.db_host
-    port          = var.db_port
-    user          = var.db_user
-    password      = var.db_password
-    name          = var.db_name
-    jdbc_url      = format("jdbc:vertica://%s:%d/%s", var.db_host, var.db_port, var.db_name)
+    host           = var.db_host
+    port           = var.db_port
+    user           = var.db_user
+    password       = var.db_password
+    name           = var.db_name
+    jdbc_url       = format("jdbc:vertica://%s:%d/%s", var.db_host, var.db_port, var.db_name)
     connection_uri = format(
       "vertica://%s:%s@%s:%d/%s",
       var.db_user,
@@ -156,34 +316,20 @@ locals {
   }
   a2a_payload = {
     endpoints = {
-      http       = local.mcp_http_endpoint
-      healthz    = local.mcp_http_healthz
-      sse        = local.mcp_http_sse
-      https      = local.mcp_https_endpoint
-      https_sse  = local.mcp_https_sse
+      http      = local.mcp_http_endpoint
+      healthz   = local.mcp_http_healthz
+      sse       = local.mcp_http_sse
+      https     = local.mcp_https_endpoint
+      https_sse = local.mcp_https_sse
     }
-    auth      = local.mcp_auth_header
-    database  = local.db_snippet
+    auth     = local.mcp_auth_header
+    database = local.db_snippet
   }
   a2a_parameter_name = trimspace(var.a2a_ssm_parameter_name)
 }
 
-resource "terraform_data" "db_instance_id_validation" {
-  count = local.db_instance_id == null ? 0 : 1
-
-  lifecycle {
-    precondition {
-      condition     = local.db_instance_id != null && local.db_instance_id != ""
-      error_message = "Set either var.db_instance_id or var.db_instance_name to identify the EC2 instance that runs Vertica MCP."
-    }
-  }
-}
-
-data "aws_instance" "dbi" {
-  count       = local.db_instance_id == null ? 0 : 1
-  instance_id = local.db_instance_id
-
-  depends_on = [terraform_data.db_instance_id_validation]
+resource "random_id" "ssm_document_suffix" {
+  byte_length = 4
 }
 
 resource "aws_ssm_document" "mcp_run" {
@@ -201,9 +347,11 @@ resource "aws_ssm_document" "mcp_run" {
         inputs = {
           runCommand = [
             "set -euo pipefail",
-            "IMG=${local.container_image}",
-            "/usr/bin/aws ecr get-login-password --region ${var.aws_region} | /usr/bin/docker login --username AWS --password-stdin ${local.container_repository}",
-            "/usr/bin/docker pull $IMG",
+            "command -v docker >/dev/null 2>&1 || { echo 'docker is required' >&2; exit 1; }",
+            "command -v aws >/dev/null 2>&1 || { echo 'aws CLI is required' >&2; exit 1; }",
+            "echo '${local.mcp_env_file_base64}' | base64 -d >${local.mcp_env_file_path}",
+            "chmod 600 ${local.mcp_env_file_path}",
+            "chown root:root ${local.mcp_env_file_path}",
             local.service_unit_command,
             "systemctl daemon-reload",
             "systemctl enable --now mcp.service",
@@ -215,27 +363,21 @@ resource "aws_ssm_document" "mcp_run" {
   })
 }
 
-resource "random_id" "ssm_document_suffix" {
-  byte_length = 4
-}
-
 resource "aws_ssm_association" "mcp_assoc" {
-  count            = local.db_instance_id == null ? 0 : 1
   name             = aws_ssm_document.mcp_run.name
   association_name = "vertica-mcp-singleton"
 
   targets {
     key    = "InstanceIds"
-    values = local.association_targets
+    values = [aws_instance.mcp.id]
   }
 
   depends_on = [
     aws_ssm_document.mcp_run,
-    terraform_data.db_instance_id_validation,
+    aws_instance.mcp,
   ]
 }
 
-# Optional: CloudFront HTTPS in front of EC2:8000
 resource "aws_cloudfront_cache_policy" "no_cache" {
   count = local.use_cloudfront ? 1 : 0
 
@@ -286,13 +428,13 @@ resource "aws_cloudfront_origin_request_policy" "auth_header" {
 }
 
 resource "aws_cloudfront_distribution" "mcp" {
-  count = local.use_cloudfront && local.db_instance_id != null ? 1 : 0
+  count = local.use_cloudfront ? 1 : 0
 
   enabled = true
   comment = "MCP over CloudFront"
 
   origin {
-    domain_name = data.aws_instance.dbi[0].public_dns
+    domain_name = aws_instance.mcp.public_dns
     origin_id   = "ec2-origin"
 
     custom_origin_config {
@@ -327,24 +469,24 @@ resource "aws_cloudfront_distribution" "mcp" {
   price_class = "PriceClass_100"
 }
 
-output "db_instance_id" {
-  value = local.db_instance_id
+output "mcp_instance_id" {
+  value = aws_instance.mcp.id
 }
 
-output "db_public_ip" {
-  value = try(data.aws_instance.dbi[0].public_ip, "")
+output "mcp_public_ip" {
+  value = local.mcp_public_ip
 }
 
 output "mcp_endpoint" {
-  value = try("http://${data.aws_instance.dbi[0].public_ip}:8000/", "")
+  value = try("http://${aws_instance.mcp.public_ip}:8000/", "")
 }
 
 output "mcp_health" {
-  value = try("http://${data.aws_instance.dbi[0].public_ip}:8000/healthz", "")
+  value = try("http://${aws_instance.mcp.public_ip}:8000/healthz", "")
 }
 
 output "mcp_sse" {
-  value = try("http://${data.aws_instance.dbi[0].public_ip}:8000/sse", "")
+  value = try("http://${aws_instance.mcp.public_ip}:8000/sse", "")
 }
 
 output "cloudfront_domain" {
@@ -361,11 +503,11 @@ output "mcp_a2a_metadata" {
 }
 
 resource "aws_ssm_parameter" "mcp_a2a" {
-  count      = local.a2a_parameter_name == "" ? 0 : 1
-  name       = local.a2a_parameter_name
+  count       = local.a2a_parameter_name == "" ? 0 : 1
+  name        = local.a2a_parameter_name
   description = "Vertica MCP machine-readable endpoints"
-  type       = "SecureString"
-  overwrite  = true
-  value      = jsonencode(local.a2a_payload)
-  depends_on = [aws_ssm_document.mcp_run]
+  type        = "SecureString"
+  overwrite   = true
+  value       = jsonencode(local.a2a_payload)
+  depends_on  = [aws_ssm_document.mcp_run]
 }
