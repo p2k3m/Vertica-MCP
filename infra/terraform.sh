@@ -75,6 +75,7 @@ if [[ -z "${COMMAND}" ]]; then
 fi
 
 EXTRA_ARGS=()
+EXPORTED_TF_VARS=()
 if [[ $# -gt 0 ]]; then
   if [[ "$1" == "--" ]]; then
     shift
@@ -212,11 +213,48 @@ PY
   rm -f "${tmp_file}"
 }
 
+export_tf_vars_from_extra_args() {
+  EXPORTED_TF_VARS=()
+
+  for arg in "${EXTRA_ARGS[@]}"; do
+    case "$arg" in
+      -var=*)
+        local assignment name value env_name
+        assignment=${arg#-var=}
+
+        if [[ "$assignment" != *=* ]]; then
+          continue
+        fi
+
+        name=${assignment%%=*}
+        value=${assignment#*=}
+
+        if [[ -z "$name" ]]; then
+          continue
+        fi
+
+        env_name="TF_VAR_${name}"
+        export "${env_name}=${value}"
+        EXPORTED_TF_VARS+=("${env_name}")
+        ;;
+    esac
+  done
+}
+
+cleanup_exported_tf_vars() {
+  for env_name in "${EXPORTED_TF_VARS[@]}"; do
+    unset "${env_name}"
+  done
+  EXPORTED_TF_VARS=()
+}
+
 run_command() {
   case "$COMMAND" in
     plan)
+      export_tf_vars_from_extra_args
       ensure_ready
       terraform validate
+      cleanup_exported_tf_vars
       terraform plan "${EXTRA_ARGS[@]}"
       ;;
     apply)
