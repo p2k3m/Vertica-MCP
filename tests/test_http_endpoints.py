@@ -14,6 +14,16 @@ def test_diagnostics_endpoint(client):
     assert "config" in payload
 
 
+def test_root_endpoint_provides_links(client):
+    response = client.get("/")
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["service"] == "vertica-mcp"
+    assert payload["health"] == "/healthz"
+    assert payload["documentation"].startswith("https://")
+
+
 def test_query_endpoint_executes_select(monkeypatch, client):
     events = {"executed": None, "cursor_closed": False}
 
