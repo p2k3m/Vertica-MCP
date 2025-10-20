@@ -298,6 +298,17 @@ def _health_response(*, ping_vertica: bool) -> Dict[str, Any]:
     }
 
 
+@app.get("/", include_in_schema=False)
+async def root() -> Dict[str, Any]:
+    """Basic landing endpoint for quick smoke tests."""
+
+    return {
+        "service": "vertica-mcp",
+        "health": "/healthz",
+        "documentation": "https://github.com/Expensify/Vertica-MCP",
+    }
+
+
 @app.get("/healthz")
 async def healthz(ping_vertica: bool = Query(False, alias="ping-vertica")):
     return _health_response(ping_vertica=ping_vertica)
@@ -330,7 +341,7 @@ async def execute_query_endpoint(payload: QueryRequest):
 @app.middleware("http")
 async def bearer(request: Request, call_next):
     token = settings.http_token
-    if token and request.url.path not in ("/healthz", "/status", "/api/info", "/sse"):
+    if token and request.url.path not in ("/", "/healthz", "/status", "/api/info", "/sse"):
         if request.headers.get("authorization") != f"Bearer {token}":
             raise HTTPException(status_code=401, detail="Unauthorized")
     return await call_next(request)
