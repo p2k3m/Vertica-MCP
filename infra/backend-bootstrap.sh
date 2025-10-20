@@ -9,6 +9,10 @@ fi
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 BACKEND_FILE="${SCRIPT_DIR}/backend.tf"
 
+PROJECT_TAG_VALUE="vertica-mcp"
+RAW_REPO_IDENTIFIER="${GITHUB_REPOSITORY:-$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")}"
+REPO_TAG_VALUE="${RAW_REPO_IDENTIFIER}"
+
 # Build a deterministic bucket name using the repository identifier when available.
 sanitize_component() {
   local value="$1"
@@ -44,10 +48,9 @@ sanitize_bucket_name() {
   echo "${value}"
 }
 
-REPO_SLUG=${GITHUB_REPOSITORY:-$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")}
-REPO_SLUG=${REPO_SLUG//\//-}
+REPO_SLUG=${RAW_REPO_IDENTIFIER//\//-}
 REPO_SLUG=$(sanitize_component "${REPO_SLUG}")
-STATE_BUCKET_RAW="tfstate-${REPO_SLUG}-${AWS_REGION}"
+STATE_BUCKET_RAW="${REPO_SLUG}-${AWS_REGION}"
 STATE_BUCKET=$(sanitize_bucket_name "${STATE_BUCKET_RAW}")
 LOCK_TABLE="tf-locks"
 
@@ -82,6 +85,17 @@ ensure_bucket_encryption() {
   fi
 }
 
+ensure_bucket_tags() {
+  local tagging_payload
+  tagging_payload=$(cat <<EOF_TAGS
+{"TagSet":[{"Key":"Project","Value":"${PROJECT_TAG_VALUE}"},{"Key":"Repo","Value":"${REPO_TAG_VALUE}"}]}
+EOF_TAGS
+  )
+  aws s3api put-bucket-tagging \
+    --bucket "${STATE_BUCKET}" \
+    --tagging "${tagging_payload}" 1>/dev/null
+}
+
 ensure_lock_table() {
   if aws dynamodb describe-table --table-name "${LOCK_TABLE}" 1>/dev/null 2>&1; then
     return
@@ -93,6 +107,19 @@ ensure_lock_table() {
     --key-schema AttributeName=LockID,KeyType=HASH \
     --billing-mode PAY_PER_REQUEST 1>/dev/null
   aws dynamodb wait table-exists --table-name "${LOCK_TABLE}"
+}
+
+ensure_lock_table_tags() {
+  local table_arn
+  table_arn=$(aws dynamodb describe-table --table-name "${LOCK_TABLE}" --query 'Table.TableArn' --output text 2>/dev/null)
+  if [[ -z "${table_arn}" || "${table_arn}" == "None" ]]; then
+    echo "Unable to determine ARN for DynamoDB table ${LOCK_TABLE}" >&2
+    return 1
+  fi
+
+  aws dynamodb tag-resource \
+    --resource-arn "${table_arn}" \
+    --tags Key=Project,Value="${PROJECT_TAG_VALUE}" Key=Repo,Value="${REPO_TAG_VALUE}"
 }
 
 write_backend_file() {
@@ -112,7 +139,9 @@ EOF_BACKEND
 ensure_bucket
 ensure_bucket_versioning
 ensure_bucket_encryption
+ensure_bucket_tags
 ensure_lock_table
+ensure_lock_table_tags
 write_backend_file
 
 echo "Terraform backend configuration written to ${BACKEND_FILE}" >&2
