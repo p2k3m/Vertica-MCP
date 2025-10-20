@@ -134,9 +134,30 @@ jobs:
         run: bash import-if-exists.sh || true
 
       - name: Optional destroy (recreate)
-        if: ${{ inputs.recreate }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.recreate }}
         working-directory: infra
-        run: terraform destroy -auto-approve || true
+        run: |
+          set -euo pipefail
+          DB_HOST="${{ secrets.MCP_DB_HOST }}"
+          if [ -z "$DB_HOST" ]; then
+            DB_HOST="127.0.0.1"
+          fi
+          DB_PORT="${{ secrets.MCP_DB_PORT }}"
+          if [ -z "$DB_PORT" ]; then
+            DB_PORT=5433
+          fi
+          USE_CLOUDFRONT="${{ github.event_name == 'workflow_dispatch' && inputs.use_cloudfront || 'false' }}"
+          terraform destroy -auto-approve \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="account_id=${{ env.AWS_ACCOUNT_ID }}" \
+            -var="http_token=${{ secrets.MCP_HTTP_TOKEN }}" \
+            -var="db_host=${DB_HOST}" \
+            -var="db_port=${DB_PORT}" \
+            -var="db_user=${{ secrets.MCP_DB_USER }}" \
+            -var="db_password=${{ secrets.MCP_DB_PASSWORD }}" \
+            -var="db_name=${{ secrets.MCP_DB_NAME }}" \
+            -var="image_tag=${IMAGE_TAG}" \
+            -var="use_cloudfront=${USE_CLOUDFRONT}"
 
       - name: Validate & Plan (detailed exit code)
         id: plan

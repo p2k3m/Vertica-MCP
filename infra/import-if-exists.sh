@@ -10,7 +10,13 @@ A2A_PARAM_NAME=${A2A_SSM_PARAMETER_NAME:-/vertica/mcp/a2a}
 
 has_state_entry() {
   local address="$1"
-  terraform state list | grep -Fxq "${address}" || true
+  local state_entries
+
+  if ! state_entries=$(terraform state list 2>/dev/null); then
+    return 1
+  fi
+
+  grep -Fxq "${address}" <<<"${state_entries}"
 }
 
 import_document_if_missing() {
