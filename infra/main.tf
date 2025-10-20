@@ -13,9 +13,22 @@ provider "aws" {
   region = var.aws_region
 }
 
+resource "aws_ecr_repository" "vertica_mcp" {
+  name                 = "vertica-mcp"
+  image_tag_mutability = "MUTABLE"
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+}
+
 locals {
   container_repository = "${var.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
-  container_image_name = "${local.container_repository}/vertica-mcp"
+  container_image_name = aws_ecr_repository.vertica_mcp.repository_url
   container_image_tag  = trimspace(var.image_tag) == "" ? "latest" : trimspace(var.image_tag)
   container_image      = "${local.container_image_name}:${local.container_image_tag}"
   service_unit_contents = <<-UNIT
