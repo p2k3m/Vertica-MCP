@@ -10,6 +10,13 @@ variable "account_id" {
 variable "db_instance_id" {
   type        = string
   description = "The EC2 instance ID that will run the Vertica MCP service"
+  default     = null
+}
+
+variable "db_instance_name" {
+  type        = string
+  description = "Optional: The value of the EC2 Name tag for the instance that will run Vertica MCP"
+  default     = null
 }
 
 variable "http_token" {
