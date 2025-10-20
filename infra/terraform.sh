@@ -7,7 +7,8 @@ Usage: terraform.sh [--recreate] <plan|apply|destroy|recreate> [-- <terraform ar
 
 Ensures the Terraform backend uses S3 with DynamoDB locking, imports
 pre-existing SSM artefacts into state, and then executes the requested
-Terraform command.
+Terraform command. The script also validates that no local state files
+exist so every run is forced to use the remote backend.
 
 Commands:
   plan       Run "terraform plan" after synchronising remote state.
@@ -104,9 +105,73 @@ import_existing_resources() {
 }
 
 ensure_ready() {
+  ensure_no_local_state
   bootstrap_backend
   terraform_init
+  verify_remote_backend
   import_existing_resources
+}
+
+ensure_no_local_state() {
+  local disallowed_state_files=(
+    "${SCRIPT_DIR}/terraform.tfstate"
+    "${SCRIPT_DIR}/terraform.tfstate.backup"
+  )
+
+  for state_file in "${disallowed_state_files[@]}"; do
+    if [[ -f "${state_file}" ]]; then
+      echo "Local Terraform state detected at ${state_file}. Remote state is required for safe multi-user operation." >&2
+      echo "Please migrate or remove the local state file before retrying." >&2
+      exit 1
+    fi
+  done
+}
+
+verify_remote_backend() {
+  local backend_state_file="${SCRIPT_DIR}/.terraform/terraform.tfstate"
+
+  if [[ ! -f "${backend_state_file}" ]]; then
+    echo "Terraform backend state metadata not found at ${backend_state_file}." >&2
+    echo "Ensure \"terraform init\" completed successfully." >&2
+    exit 1
+  fi
+
+  python <<'PY' "${backend_state_file}"
+import json
+import pathlib
+import sys
+
+backend_file = pathlib.Path(sys.argv[1])
+try:
+    backend_state = json.loads(backend_file.read_text())
+except Exception as exc:  # pragma: no cover - defensive guard for malformed files
+    print(
+        f"Unable to parse Terraform backend metadata from {backend_file}: {exc}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+backend = backend_state.get("backend") or {}
+backend_type = backend.get("type")
+if backend_type != "s3":
+    print(
+        "Terraform backend must be configured for the S3 remote backend.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+config = backend.get("config") or {}
+if not config.get("bucket"):
+    print("Terraform backend is missing the S3 bucket configuration.", file=sys.stderr)
+    sys.exit(1)
+
+if not config.get("dynamodb_table"):
+    print(
+        "Terraform backend must configure a DynamoDB table for state locking.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+PY
 }
 
 write_a2a_artifact() {
