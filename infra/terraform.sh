@@ -216,6 +216,7 @@ run_command() {
   case "$COMMAND" in
     plan)
       ensure_ready
+      terraform validate
       terraform plan "${EXTRA_ARGS[@]}"
       ;;
     apply)
