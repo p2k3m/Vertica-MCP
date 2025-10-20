@@ -1,6 +1,7 @@
 variable "aws_region" {
-  type    = string
-  default = "ap-south-1"
+  type        = string
+  description = "AWS region to deploy Vertica MCP into"
+  default     = "us-east-1"
 }
 
 variable "account_id" {
@@ -21,6 +22,7 @@ variable "mcp_environment" {
 variable "db_host" {
   type        = string
   description = "Hostname or IP address of the Vertica database"
+  default     = "127.0.0.1"
 }
 
 variable "db_port" {
@@ -32,16 +34,19 @@ variable "db_port" {
 variable "db_user" {
   type        = string
   description = "Database user that the MCP server will authenticate as"
+  default     = "mcp_app"
 }
 
 variable "db_password" {
   type        = string
   description = "Password for the Vertica database user"
+  default     = "change-me-please"
 }
 
 variable "db_name" {
   type        = string
   description = "Vertica database name"
+  default     = "vertica"
 }
 
 variable "mcp_instance_type" {
@@ -58,7 +63,7 @@ variable "mcp_instance_type" {
 variable "mcp_subnet_id" {
   type        = string
   description = "Optional subnet ID where the MCP instance should be launched. Defaults to the default VPC subnet."
-  default     = null
+  default     = ""
 }
 
 variable "mcp_additional_security_group_ids" {

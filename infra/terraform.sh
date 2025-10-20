@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+DEFAULT_AWS_REGION="us-east-1"
+DEFAULT_INSTANCE_TYPE="t3.micro"
+DEFAULT_SUBNET_ID=""
+DEFAULT_DB_HOST="127.0.0.1"
+DEFAULT_DB_PORT="5433"
+DEFAULT_DB_USER="mcp_app"
+DEFAULT_DB_PASSWORD="change-me-please"
+DEFAULT_DB_NAME="vertica"
+
 usage() {
   cat <<'USAGE'
 Usage: terraform.sh [--recreate] <plan|apply|destroy|recreate> [-- <terraform args>]
@@ -18,11 +27,32 @@ Commands:
 
 Options:
   --recreate   Perform a destroy followed by an apply in one run.
+  --region <name>
+               Override the AWS region (defaults to us-east-1).
+  --instance-type <type>
+               Override the MCP instance type (defaults to t3.micro).
+  --subnet-id <subnet>
+               Launch the MCP host in a specific subnet (defaults to the default VPC).
+  --db-host <host>
+               Override the Vertica database host (defaults to 127.0.0.1).
+  --db-port <port>
+               Override the Vertica database port (defaults to 5433).
+  --db-user <user>
+               Override the Vertica database user (defaults to mcp_app).
+  --db-password <password>
+               Override the Vertica database password (defaults to change-me-please).
+  --db-name <name>
+               Override the Vertica database name (defaults to vertica).
   -h, --help   Show this message and exit.
 
 Additional arguments after "--" are passed directly to Terraform.
 Environment:
-  AWS_REGION must be set so the backend bootstrapper knows where to operate.
+  AWS_REGION sets the deployment region (defaults to us-east-1). MCP_REGION is
+  also honoured.
+  MCP_INSTANCE_TYPE, MCP_SUBNET_ID, MCP_DB_HOST, MCP_DB_PORT, MCP_DB_USER,
+  MCP_DB_PASSWORD, and MCP_DB_NAME provide environment overrides for the
+  corresponding Terraform variables. TF_VAR_* exports remain fully supported
+  and take precedence over the built-in defaults.
 USAGE
 }
 
@@ -39,12 +69,92 @@ fi
 
 RECREATE_FLAG=false
 COMMAND=""
+CLI_REGION=""
+CLI_INSTANCE_TYPE=""
+CLI_SUBNET_ID=""
+CLI_DB_HOST=""
+CLI_DB_PORT=""
+CLI_DB_USER=""
+CLI_DB_PASSWORD=""
+CLI_DB_NAME=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --recreate)
       RECREATE_FLAG=true
       shift
+      ;;
+    --region)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --region" >&2
+        usage
+        exit 1
+      fi
+      CLI_REGION="$2"
+      shift 2
+      ;;
+    --instance-type)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --instance-type" >&2
+        usage
+        exit 1
+      fi
+      CLI_INSTANCE_TYPE="$2"
+      shift 2
+      ;;
+    --subnet-id)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --subnet-id" >&2
+        usage
+        exit 1
+      fi
+      CLI_SUBNET_ID="$2"
+      shift 2
+      ;;
+    --db-host)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --db-host" >&2
+        usage
+        exit 1
+      fi
+      CLI_DB_HOST="$2"
+      shift 2
+      ;;
+    --db-port)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --db-port" >&2
+        usage
+        exit 1
+      fi
+      CLI_DB_PORT="$2"
+      shift 2
+      ;;
+    --db-user)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --db-user" >&2
+        usage
+        exit 1
+      fi
+      CLI_DB_USER="$2"
+      shift 2
+      ;;
+    --db-password)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --db-password" >&2
+        usage
+        exit 1
+      fi
+      CLI_DB_PASSWORD="$2"
+      shift 2
+      ;;
+    --db-name)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --db-name" >&2
+        usage
+        exit 1
+      fi
+      CLI_DB_NAME="$2"
+      shift 2
       ;;
     -h|--help)
       usage
@@ -73,6 +183,48 @@ if [[ -z "${COMMAND}" ]]; then
   usage
   exit 1
 fi
+
+resolve_value() {
+  local default_value="$1"
+  shift
+  local resolved="$default_value"
+  local candidate
+  for candidate in "$@"; do
+    if [[ -n "${candidate}" ]]; then
+      resolved="${candidate}"
+    fi
+  done
+  printf '%s' "${resolved}"
+}
+
+RESOLVED_REGION=$(resolve_value "${DEFAULT_AWS_REGION}" "${TF_VAR_aws_region:-}" "${MCP_REGION:-}" "${AWS_REGION:-}" "${CLI_REGION}")
+export AWS_REGION="${RESOLVED_REGION}"
+export TF_VAR_aws_region="${RESOLVED_REGION}"
+
+RESOLVED_INSTANCE_TYPE=$(resolve_value "${DEFAULT_INSTANCE_TYPE}" "${TF_VAR_mcp_instance_type:-}" "${MCP_INSTANCE_TYPE:-}" "${CLI_INSTANCE_TYPE}")
+export TF_VAR_mcp_instance_type="${RESOLVED_INSTANCE_TYPE}"
+
+RESOLVED_SUBNET_ID=$(resolve_value "${DEFAULT_SUBNET_ID}" "${TF_VAR_mcp_subnet_id:-}" "${MCP_SUBNET_ID:-}" "${CLI_SUBNET_ID}")
+if [[ -z "${RESOLVED_SUBNET_ID}" ]]; then
+  unset TF_VAR_mcp_subnet_id
+else
+  export TF_VAR_mcp_subnet_id="${RESOLVED_SUBNET_ID}"
+fi
+
+RESOLVED_DB_HOST=$(resolve_value "${DEFAULT_DB_HOST}" "${TF_VAR_db_host:-}" "${MCP_DB_HOST:-}" "${CLI_DB_HOST}")
+export TF_VAR_db_host="${RESOLVED_DB_HOST}"
+
+RESOLVED_DB_PORT=$(resolve_value "${DEFAULT_DB_PORT}" "${TF_VAR_db_port:-}" "${MCP_DB_PORT:-}" "${CLI_DB_PORT}")
+export TF_VAR_db_port="${RESOLVED_DB_PORT}"
+
+RESOLVED_DB_USER=$(resolve_value "${DEFAULT_DB_USER}" "${TF_VAR_db_user:-}" "${MCP_DB_USER:-}" "${CLI_DB_USER}")
+export TF_VAR_db_user="${RESOLVED_DB_USER}"
+
+RESOLVED_DB_PASSWORD=$(resolve_value "${DEFAULT_DB_PASSWORD}" "${TF_VAR_db_password:-}" "${MCP_DB_PASSWORD:-}" "${CLI_DB_PASSWORD}")
+export TF_VAR_db_password="${RESOLVED_DB_PASSWORD}"
+
+RESOLVED_DB_NAME=$(resolve_value "${DEFAULT_DB_NAME}" "${TF_VAR_db_name:-}" "${MCP_DB_NAME:-}" "${CLI_DB_NAME}")
+export TF_VAR_db_name="${RESOLVED_DB_NAME}"
 
 EXTRA_ARGS=()
 EXPORTED_TF_VARS=()
