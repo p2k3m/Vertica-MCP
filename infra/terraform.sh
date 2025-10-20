@@ -397,6 +397,12 @@ update_readme_from_outputs() {
   rm -f "${tmp_file}"
 }
 
+reset_readme_endpoints() {
+  if ! python3 "${SCRIPT_DIR}/update_readme.py" --readme "${REPO_ROOT}/README.md"; then
+    echo "Warning: failed to reset README endpoints." >&2
+  fi
+}
+
 export_tf_vars_from_extra_args() {
   EXPORTED_TF_VARS=()
 
@@ -480,6 +486,7 @@ run_command() {
       if [[ "${destroy_exit}" -ne 0 ]]; then
         exit "${destroy_exit}"
       fi
+      reset_readme_endpoints
       ;;
     *)
       echo "Unsupported command: ${COMMAND}" >&2
