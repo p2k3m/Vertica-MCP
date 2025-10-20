@@ -59,15 +59,29 @@ locals {
     Name    = local.mcp_instance_name
     Service = "Vertica-MCP"
   }
+  http_token_trimmed        = trimspace(var.http_token)
+  db_env_snippet            = {
+    DB_HOST     = var.db_host
+    DB_PORT     = tostring(var.db_port)
+    DB_USER     = var.db_user
+    DB_PASSWORD = var.db_password
+    DB_NAME     = var.db_name
+  }
+  http_env_snippet          = local.http_token_trimmed == "" ? {} : { MCP_HTTP_TOKEN = local.http_token_trimmed }
+  mcp_env_map               = merge(local.db_env_snippet, local.http_env_snippet, var.mcp_environment)
+  mcp_env_reserved_keys     = ["DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME", "MCP_HTTP_TOKEN"]
   mcp_env_file_path         = "/etc/mcp.env"
-  mcp_env_file_contents     = trimspace(<<-ENV
-DB_HOST=${var.db_host}
-DB_PORT=${var.db_port}
-DB_USER=${var.db_user}
-DB_PASSWORD=${var.db_password}
-DB_NAME=${var.db_name}
-MCP_HTTP_TOKEN=${var.http_token}
-ENV
+  mcp_env_file_contents     = join(
+    "\n",
+    concat(
+      compact([
+        for key in local.mcp_env_reserved_keys : try("${key}=${local.mcp_env_map[key]}", null)
+      ]),
+      [
+        for key in sort(tolist(setsubtract(toset(keys(local.mcp_env_map)), toset(local.mcp_env_reserved_keys)))) :
+        "${key}=${local.mcp_env_map[key]}"
+      ],
+    ),
   )
   mcp_env_file_base64       = base64encode(local.mcp_env_file_contents)
   mcp_bootstrap_user_data   = <<-USERDATA
@@ -319,18 +333,10 @@ locals {
   mcp_http_sse       = local.mcp_http_base == "" ? null : "${local.mcp_http_base}/sse"
   mcp_https_endpoint = length(aws_cloudfront_distribution.mcp) > 0 ? "https://${aws_cloudfront_distribution.mcp[0].domain_name}/" : null
   mcp_https_sse      = length(aws_cloudfront_distribution.mcp) > 0 ? "https://${aws_cloudfront_distribution.mcp[0].domain_name}/sse" : null
-  http_token_trimmed = trimspace(var.http_token)
   mcp_auth_header    = local.http_token_trimmed == "" ? null : {
     header = "Authorization"
     value  = "Bearer ${local.http_token_trimmed}"
     token  = local.http_token_trimmed
-  }
-  db_env_snippet = {
-    DB_HOST     = var.db_host
-    DB_PORT     = tostring(var.db_port)
-    DB_USER     = var.db_user
-    DB_PASSWORD = var.db_password
-    DB_NAME     = var.db_name
   }
   db_snippet = {
     host           = var.db_host
