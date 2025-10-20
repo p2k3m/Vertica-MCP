@@ -12,7 +12,7 @@ DEFAULT_DB_NAME="vertica"
 
 usage() {
   cat <<'USAGE'
-Usage: terraform.sh [--recreate] <plan|apply|destroy|recreate> [-- <terraform args>]
+Usage: terraform.sh [--recreate] [--allow-multiple] <plan|apply|destroy|recreate> [-- <terraform args>]
 
 Ensures the Terraform backend uses S3 with DynamoDB locking, imports
 pre-existing SSM artefacts into state, and then executes the requested
@@ -27,6 +27,8 @@ Commands:
 
 Options:
   --recreate   Perform a destroy followed by an apply in one run.
+  --allow-multiple
+               Disable the singleton guard so multiple MCP hosts can be provisioned.
   --region <name>
                Override the AWS region (defaults to us-east-1).
   --instance-type <type>
@@ -77,11 +79,16 @@ CLI_DB_PORT=""
 CLI_DB_USER=""
 CLI_DB_PASSWORD=""
 CLI_DB_NAME=""
+CLI_ALLOW_MULTIPLE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --recreate)
       RECREATE_FLAG=true
+      shift
+      ;;
+    --allow-multiple)
+      CLI_ALLOW_MULTIPLE="true"
       shift
       ;;
     --region)
@@ -225,6 +232,13 @@ export TF_VAR_db_password="${RESOLVED_DB_PASSWORD}"
 
 RESOLVED_DB_NAME=$(resolve_value "${DEFAULT_DB_NAME}" "${TF_VAR_db_name:-}" "${MCP_DB_NAME:-}" "${CLI_DB_NAME}")
 export TF_VAR_db_name="${RESOLVED_DB_NAME}"
+
+RESOLVED_ALLOW_MULTIPLE=$(resolve_value "false" "${TF_VAR_allow_multiple_mcp_instances:-}" "${CLI_ALLOW_MULTIPLE}")
+if [[ -z "${RESOLVED_ALLOW_MULTIPLE}" ]]; then
+  unset TF_VAR_allow_multiple_mcp_instances
+else
+  export TF_VAR_allow_multiple_mcp_instances="${RESOLVED_ALLOW_MULTIPLE}"
+fi
 
 EXTRA_ARGS=()
 EXPORTED_TF_VARS=()

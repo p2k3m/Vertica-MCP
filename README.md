@@ -30,6 +30,11 @@ AWS_REGION=us-east-1 ./terraform.sh plan
 AWS_REGION=us-east-1 ./terraform.sh apply -- -auto-approve
 ```
 
+The wrapper enforces a singleton MCP host by default. If you intentionally need
+to launch additional MCP instances, pass `--allow-multiple` (or set
+`TF_VAR_allow_multiple_mcp_instances=true`) before applying so the singleton
+guard can be bypassed explicitly.
+
 To destroy the stack when you are done:
 
 ```bash

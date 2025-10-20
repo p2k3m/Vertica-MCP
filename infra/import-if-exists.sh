@@ -7,6 +7,19 @@ cd "${SCRIPT_DIR}"
 DOC_NAME="vertica-mcp-run"
 ASSOCIATION_NAME="vertica-mcp-singleton"
 A2A_PARAM_NAME=${A2A_SSM_PARAMETER_NAME:-/vertica/mcp/a2a}
+SINGLETON_PARAM_NAME="/vertica/mcp/singleton-lock"
+ALLOW_MULTIPLE="${TF_VAR_allow_multiple_mcp_instances:-}"
+
+is_truthy() {
+  local value="${1:-}"
+  shopt -s nocasematch
+  if [[ "${value}" =~ ^(1|true|yes|y)$ ]]; then
+    shopt -u nocasematch
+    return 0
+  fi
+  shopt -u nocasematch
+  return 1
+}
 
 has_state_entry() {
   local address="$1"
@@ -63,6 +76,19 @@ import_parameter_if_missing() {
   fi
 }
 
+import_singleton_lock_if_missing() {
+  if is_truthy "${ALLOW_MULTIPLE}"; then
+    return
+  fi
+
+  if aws ssm get-parameter --name "${SINGLETON_PARAM_NAME}" >/dev/null 2>&1; then
+    if ! has_state_entry "aws_ssm_parameter.mcp_singleton_lock[0]"; then
+      echo "Importing existing SSM parameter ${SINGLETON_PARAM_NAME} into state" >&2
+      terraform import 'aws_ssm_parameter.mcp_singleton_lock[0]' "${SINGLETON_PARAM_NAME}" >/dev/null
+    fi
+  fi
+}
+
 import_ecr_repository_if_missing() {
   local repo_name="vertica-mcp"
 
@@ -84,4 +110,5 @@ import_ecr_repository_if_missing() {
 import_document_if_missing
 import_association_if_missing
 import_parameter_if_missing
+import_singleton_lock_if_missing
 import_ecr_repository_if_missing

@@ -95,3 +95,9 @@ variable "a2a_ssm_parameter_name" {
   description = "SSM parameter name that stores MCP A2A metadata (set to empty to disable)"
   default     = "/vertica/mcp/a2a"
 }
+
+variable "allow_multiple_mcp_instances" {
+  type        = bool
+  description = "Allow provisioning multiple MCP EC2 instances concurrently (disables the singleton guard)."
+  default     = false
+}
