@@ -48,6 +48,11 @@ locals {
   ])
 }
 
+locals {
+  use_cloudfront_input = try(trimspace(tostring(var.use_cloudfront)), "")
+  use_cloudfront       = local.use_cloudfront_input != "" && contains(["1", "true", "yes", "y"], lower(local.use_cloudfront_input))
+}
+
 data "aws_instances" "db_from_name" {
   count = var.db_instance_name == null ? 0 : 1
 
@@ -63,9 +68,12 @@ locals {
     try(data.aws_instances.db_from_name[0].ids[0], null),
   ])
   db_instance_id = try(local.db_instance_id_candidates[0], null)
+  association_targets = local.db_instance_id == null ? [] : [local.db_instance_id]
 }
 
 resource "terraform_data" "db_instance_id_validation" {
+  count = local.db_instance_id == null ? 0 : 1
+
   lifecycle {
     precondition {
       condition     = local.db_instance_id != null && local.db_instance_id != ""
@@ -109,12 +117,13 @@ resource "aws_ssm_document" "mcp_run" {
 }
 
 resource "aws_ssm_association" "mcp_assoc" {
+  count            = local.db_instance_id == null ? 0 : 1
   name             = aws_ssm_document.mcp_run.name
   association_name = "vertica-mcp-singleton"
 
   targets {
     key    = "InstanceIds"
-    values = [local.db_instance_id]
+    values = local.association_targets
   }
 
   depends_on = [
@@ -125,7 +134,7 @@ resource "aws_ssm_association" "mcp_assoc" {
 
 # Optional: CloudFront HTTPS in front of EC2:8000
 resource "aws_cloudfront_cache_policy" "no_cache" {
-  count = var.use_cloudfront ? 1 : 0
+  count = local.use_cloudfront ? 1 : 0
 
   name        = "mcp-no-cache"
   default_ttl = 0
@@ -152,7 +161,7 @@ resource "aws_cloudfront_cache_policy" "no_cache" {
 }
 
 resource "aws_cloudfront_origin_request_policy" "all_hdrs" {
-  count = var.use_cloudfront ? 1 : 0
+  count = local.use_cloudfront ? 1 : 0
 
   name = "mcp-forward-all-headers"
 
@@ -170,7 +179,7 @@ resource "aws_cloudfront_origin_request_policy" "all_hdrs" {
 }
 
 resource "aws_cloudfront_distribution" "mcp" {
-  count = var.use_cloudfront ? 1 : 0
+  count = local.use_cloudfront && local.db_instance_id != null ? 1 : 0
 
   enabled = true
   comment = "MCP over CloudFront"
@@ -216,25 +225,25 @@ output "db_instance_id" {
 }
 
 output "db_public_ip" {
-  value = data.aws_instance.dbi[0].public_ip
+  value = try(data.aws_instance.dbi[0].public_ip, "")
 }
 
 output "mcp_endpoint" {
-  value = "http://${data.aws_instance.dbi[0].public_ip}:8000/"
+  value = try("http://${data.aws_instance.dbi[0].public_ip}:8000/", "")
 }
 
 output "mcp_health" {
-  value = "http://${data.aws_instance.dbi[0].public_ip}:8000/healthz"
+  value = try("http://${data.aws_instance.dbi[0].public_ip}:8000/healthz", "")
 }
 
 output "mcp_sse" {
-  value = "http://${data.aws_instance.dbi[0].public_ip}:8000/sse"
+  value = try("http://${data.aws_instance.dbi[0].public_ip}:8000/sse", "")
 }
 
 output "cloudfront_domain" {
-  value = var.use_cloudfront ? aws_cloudfront_distribution.mcp[0].domain_name : ""
+  value = length(aws_cloudfront_distribution.mcp) > 0 ? aws_cloudfront_distribution.mcp[0].domain_name : ""
 }
 
 output "mcp_https" {
-  value = var.use_cloudfront ? "https://${aws_cloudfront_distribution.mcp[0].domain_name}/" : ""
+  value = length(aws_cloudfront_distribution.mcp) > 0 ? "https://${aws_cloudfront_distribution.mcp[0].domain_name}/" : ""
 }
