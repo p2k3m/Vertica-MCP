@@ -80,6 +80,48 @@ def test_run_sql_schema_allowlist(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
         sqlman.run_sql("bad.sql", {"schema": "public"})
 
 
+def test_ensure_schema_allowed_validates_identifiers(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(sqlman.settings, "allowed_schemas", ["public"], raising=False)
+
+    with pytest.raises(ValueError):
+        sqlman.ensure_schema_allowed("bad-schema")
+
+    with pytest.raises(PermissionError):
+        sqlman.ensure_schema_allowed("secret")
+
+
+def test_run_sql_uses_configured_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    cursor = _setup(monkeypatch, tmp_path, rows=[("a", 1)])
+    (tmp_path / "timeout.sql").write_text("SELECT 1", encoding="utf-8")
+
+    monkeypatch.setattr(sqlman.settings, "max_rows", 5, raising=False)
+    monkeypatch.setattr(sqlman.settings, "query_timeout_s", 42, raising=False)
+
+    events: list = []
+
+    class _RecordTimeout:
+        def __init__(self, seconds: int) -> None:
+            events.append(seconds)
+
+        def __enter__(self):
+            events.append("enter")
+            return None
+
+        def __exit__(self, exc_type, exc, tb):
+            events.append("exit")
+            return False
+
+    monkeypatch.setattr(sqlman, "Timeout", _RecordTimeout)
+
+    rows, provenance = sqlman.run_sql("timeout.sql", {"schema": "public"}, limit=10)
+
+    assert rows == [("a", 1)]
+    assert cursor.params["limit"] == 5
+    assert events[0] == 42
+    assert events[-1] == "exit"
+    assert provenance.duration_ms >= 0
+
+
 def test_ranked_multi(monkeypatch: pytest.MonkeyPatch):
     def fake_run_sql(name, params, limit=None):
         rows = {
