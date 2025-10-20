@@ -77,6 +77,7 @@ ENV
     echo "[mcp] Bootstrapping MCP host" | tee /var/log/mcp-bootstrap.log
     dnf update -y
     dnf install -y docker python3 python3-pip awscli jq
+    python3 -m pip install --upgrade pip
     systemctl enable --now docker
     usermod -aG docker ec2-user || true
 
@@ -105,7 +106,7 @@ ENV
     ExecStartPre=/bin/grep -Eq '^DB_NAME=.+' ${local.mcp_env_file_path}
     ExecStartPre=/usr/bin/docker pull ${local.container_image}
     ExecStartPre=/usr/bin/docker rm -f mcp || true
-    ExecStart=/usr/bin/docker run --name mcp -p 8000:8000 --restart unless-stopped --env-file ${local.mcp_env_file_path} ${local.container_image}
+    ExecStart=/usr/bin/docker run --name mcp -p 8000:8000 --restart unless-stopped --env-file ${local.mcp_env_file_path} ${local.container_image} python -m mcp_vertica.server
     ExecStop=/usr/bin/docker stop mcp
     StandardOutput=journal
     StandardError=journal

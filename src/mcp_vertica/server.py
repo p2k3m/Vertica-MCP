@@ -171,6 +171,30 @@ def _query_execution(query: str) -> Dict[str, Any]:
                 cursor.close()
 
 
+def _run_server() -> None:
+    """Run the MCP API using uvicorn."""
+
+    import uvicorn  # Imported lazily so unit tests without uvicorn still pass
+
+    host = os.environ.get("HOST", "0.0.0.0")
+    try:
+        port = int(os.environ.get("PORT", "8000"))
+    except ValueError:
+        port = 8000
+
+    uvicorn.run("mcp_vertica.server:app", host=host, port=port, log_level="info")
+
+
+def main() -> None:
+    """CLI entrypoint for running the FastAPI server."""
+
+    _run_server()
+
+
+if __name__ == "__main__":  # pragma: no cover - runtime behaviour
+    main()
+
+
 class QueryRequest(BaseModel):
     query: str = Field(..., description="SQL SELECT statement to execute")
 
