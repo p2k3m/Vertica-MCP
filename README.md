@@ -53,11 +53,15 @@ manually.
 <!-- BEGIN MCP ENDPOINTS -->
 
 **Direct EC2 (HTTP on port 8000)**  
-* Not available (deployment not yet provisioned).
+* Base URL: [`http://13.201.178.8:8000/`](http://13.201.178.8:8000/)
+* Health check: [`http://13.201.178.8:8000/healthz`](http://13.201.178.8:8000/healthz)
+* Server-Sent Events: [`http://13.201.178.8:8000/sse`](http://13.201.178.8:8000/sse)
+* Public IP: `13.201.178.8`
+* Public DNS: `ec2-13-201-178-8.ap-south-1.compute.amazonaws.com`
 
 **CloudFront (HTTPS)**  
 * Not enabled for this deployment.
 
-_Last updated: 2025-10-20 13:23:09Z_
+_Last updated: 2025-10-20 13:53:57Z_
 
 <!-- END MCP ENDPOINTS -->
