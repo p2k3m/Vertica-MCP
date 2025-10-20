@@ -94,11 +94,13 @@ if [[ -z "${AWS_REGION:-}" ]]; then
 fi
 
 bootstrap_backend() {
-  "${SCRIPT_DIR}/backend-bootstrap.sh" >/dev/null
+  echo "Running backend bootstrapper..." >&2
+  "${SCRIPT_DIR}/backend-bootstrap.sh"
 }
 
 terraform_init() {
-  terraform init -input=false >/dev/null
+  echo "Initializing Terraform working directory..." >&2
+  terraform init -input=false
 }
 
 import_existing_resources() {
