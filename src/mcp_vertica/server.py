@@ -199,8 +199,7 @@ class QueryRequest(BaseModel):
     query: str = Field(..., description="SQL SELECT statement to execute")
 
 
-@app.get("/healthz")
-async def healthz(ping_vertica: bool = Query(False, alias="ping-vertica")):
+def _health_response(*, ping_vertica: bool) -> Dict[str, Any]:
     if ping_vertica:
         checks = {"database": _database_check()}
     else:
@@ -225,6 +224,22 @@ async def healthz(ping_vertica: bool = Query(False, alias="ping-vertica")):
     }
 
 
+@app.get("/healthz")
+async def healthz(ping_vertica: bool = Query(False, alias="ping-vertica")):
+    return _health_response(ping_vertica=ping_vertica)
+
+
+@app.get("/status", include_in_schema=False)
+async def status():
+    """Kubernetes-style liveness endpoint.
+
+    The health checks run in "skip" mode to avoid touching Vertica so liveness
+    probes remain lightweight.
+    """
+
+    return _health_response(ping_vertica=False)
+
+
 @app.get("/diagnostics")
 async def diagnostics():
     return {
@@ -241,7 +256,7 @@ async def execute_query_endpoint(payload: QueryRequest):
 @app.middleware("http")
 async def bearer(request: Request, call_next):
     token = settings.http_token
-    if token and request.url.path not in ("/healthz", "/api/info", "/sse"):
+    if token and request.url.path not in ("/healthz", "/status", "/api/info", "/sse"):
         if request.headers.get("authorization") != f"Bearer {token}":
             raise HTTPException(status_code=401, detail="Unauthorized")
     return await call_next(request)

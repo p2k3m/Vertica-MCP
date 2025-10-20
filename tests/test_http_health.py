@@ -60,6 +60,22 @@ def test_health_endpoint_reports_failures(monkeypatch, client):
     assert payload["checks"]["database"]["error"] == "no connection"
 
 
+def test_status_endpoint_is_lightweight(monkeypatch, client):
+    """The status endpoint should not attempt to contact Vertica."""
+
+    def fake_database_check():  # pragma: no cover - guard against invocation
+        raise AssertionError("status endpoint should not ping Vertica")
+
+    monkeypatch.setattr(server, "_database_check", fake_database_check)
+
+    response = client.get("/status")
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["checks"]["database"]["skipped"] is True
+
+
 def test_database_check_success(monkeypatch):
     events = {"cursor_closed": False}
 
