@@ -18,9 +18,24 @@ LOGGER = logging.getLogger(__name__)
 
 
 def _env(key: str, default: str | None = None) -> str | None:
-    """Read environment variables with an ``MCP_`` prefix fallback."""
+    """Read environment variables with an ``MCP_`` prefix fallback.
 
-    return os.getenv(key, os.getenv(f"MCP_{key}", default))
+    Empty strings are treated the same as an unset variable so callers can rely
+    on sensible defaults when operators intentionally clear optional
+    configuration values.
+    """
+
+    value = os.getenv(key)
+    if value is None:
+        value = os.getenv(f"MCP_{key}")
+
+    if value is None:
+        return default
+
+    if value.strip() == "":
+        return default
+
+    return value
 
 
 def _require_env(key: str) -> str:
