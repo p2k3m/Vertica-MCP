@@ -168,6 +168,15 @@ resource "aws_security_group" "mcp" {
   }
 
   ingress {
+    description = "Allow Vertica database traffic"
+    from_port   = 5433
+    to_port     = 5433
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
+  ingress {
     description = "Allow ICMP for diagnostics"
     from_port   = -1
     to_port     = -1
@@ -177,6 +186,34 @@ resource "aws_security_group" "mcp" {
   }
 
   egress {
+    description = "Allow MCP to reach Vertica database hosts"
+    from_port   = 5433
+    to_port     = 5433
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
+  egress {
+    description = "Allow MCP service HTTP egress"
+    from_port   = 8000
+    to_port     = 8000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
+  egress {
+    description = "Allow ICMP diagnostics from MCP"
+    from_port   = -1
+    to_port     = -1
+    protocol    = "icmp"
+    cidr_blocks = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
+  egress {
+    description = "Allow all other outbound traffic"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
