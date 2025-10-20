@@ -12,6 +12,12 @@ variable "http_token" {
   default = ""
 }
 
+variable "mcp_environment" {
+  type        = map(string)
+  description = "Additional environment variables to inject into the MCP service container"
+  default     = {}
+}
+
 variable "db_host" {
   type        = string
   description = "Hostname or IP address of the Vertica database"
