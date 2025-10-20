@@ -332,11 +332,9 @@ resource "aws_instance" "mcp" {
     Environment = "production"
   })
 
-  depends_on = var.allow_multiple_mcp_instances ? [
+  depends_on = [
     aws_security_group_rule.allow_mcp_to_vertica,
-  ] : [
-    aws_security_group_rule.allow_mcp_to_vertica,
-    aws_ssm_parameter.mcp_singleton_lock[0],
+    aws_ssm_parameter.mcp_singleton_lock,
   ]
 }
 
