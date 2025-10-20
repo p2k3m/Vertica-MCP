@@ -138,8 +138,12 @@ data "aws_vpc" "default" {
 }
 
 data "aws_subnets" "default" {
-  count  = local.requested_subnet_id == "" ? 1 : 0
-  vpc_id = data.aws_vpc.default[0].id
+  count = local.requested_subnet_id == "" ? 1 : 0
+
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default[0].id]
+  }
 }
 
 locals {
