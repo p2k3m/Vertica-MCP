@@ -59,6 +59,7 @@ locals {
     Name    = local.mcp_instance_name
     Service = "Vertica-MCP"
   }
+  singleton_lock_parameter_name = "/vertica/mcp/singleton-lock"
   http_token_trimmed        = trimspace(var.http_token)
   db_env_snippet            = {
     DB_HOST     = var.db_host
@@ -296,6 +297,15 @@ resource "aws_iam_instance_profile" "mcp" {
   role = aws_iam_role.mcp.name
 }
 
+resource "aws_ssm_parameter" "mcp_singleton_lock" {
+  count       = var.allow_multiple_mcp_instances ? 0 : 1
+  name        = local.singleton_lock_parameter_name
+  description = "Vertica MCP singleton guard"
+  type        = "String"
+  value       = local.mcp_instance_name
+  overwrite   = false
+}
+
 resource "aws_instance" "mcp" {
   ami                    = data.aws_ssm_parameter.al2023.value
   instance_type          = var.mcp_instance_type
@@ -322,7 +332,12 @@ resource "aws_instance" "mcp" {
     Environment = "production"
   })
 
-  depends_on = [aws_security_group_rule.allow_mcp_to_vertica]
+  depends_on = var.allow_multiple_mcp_instances ? [
+    aws_security_group_rule.allow_mcp_to_vertica,
+  ] : [
+    aws_security_group_rule.allow_mcp_to_vertica,
+    aws_ssm_parameter.mcp_singleton_lock[0],
+  ]
 }
 
 locals {
