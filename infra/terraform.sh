@@ -258,6 +258,7 @@ run_command() {
       terraform plan "${EXTRA_ARGS[@]}"
       ;;
     apply)
+      export_tf_vars_from_extra_args
       ensure_ready
       if [[ "${RECREATE_FLAG}" == "true" ]]; then
         terraform destroy -auto-approve "${EXTRA_ARGS[@]}"
@@ -265,11 +266,14 @@ run_command() {
       else
         terraform apply "${EXTRA_ARGS[@]}"
       fi
+      cleanup_exported_tf_vars
       write_a2a_artifact
       ;;
     destroy)
+      export_tf_vars_from_extra_args
       ensure_ready
       terraform destroy "${EXTRA_ARGS[@]}"
+      cleanup_exported_tf_vars
       ;;
     *)
       echo "Unsupported command: ${COMMAND}" >&2
