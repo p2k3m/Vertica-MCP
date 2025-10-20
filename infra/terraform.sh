@@ -136,7 +136,7 @@ verify_remote_backend() {
     exit 1
   fi
 
-  python <<'PY' "${backend_state_file}"
+  python - "${backend_state_file}" <<'PY'
 import json
 import pathlib
 import sys
@@ -183,7 +183,7 @@ write_a2a_artifact() {
     return
   fi
 
-  python <<'PY' "${tmp_file}" "${A2A_ARTIFACT_PATH}"
+  python - "${tmp_file}" "${A2A_ARTIFACT_PATH}" <<'PY'
 import json
 import pathlib
 import sys
