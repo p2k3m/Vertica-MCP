@@ -3,7 +3,7 @@ import os
 
 
 class Settings(BaseModel):
-host: str = os.getenv("DB_HOST", os.getenv("MCP_DB_HOST", "3.110.152.164"))
+host: str = os.getenv("DB_HOST", os.getenv("MCP_DB_HOST", "65.2.48.97"))
 port: int = int(os.getenv("DB_PORT", os.getenv("MCP_DB_PORT", "5433")))
 user: str = os.getenv("DB_USER", os.getenv("MCP_DB_USER", "dbadmin"))
 password: str = os.getenv("DB_PASSWORD", os.getenv("MCP_DB_PASSWORD", ""))
@@ -25,4 +25,5 @@ if os.getenv("ALLOWED_SCHEMAS") else ["public"]
 
 
 settings = Settings()
+
 
