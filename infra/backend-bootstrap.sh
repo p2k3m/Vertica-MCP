@@ -10,9 +10,45 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 BACKEND_FILE="${SCRIPT_DIR}/backend.tf"
 
 # Build a deterministic bucket name using the repository identifier when available.
+sanitize_component() {
+  local value="$1"
+  value=$(echo "${value}" | tr '[:upper:]' '[:lower:]')
+  value=$(echo "${value}" | tr -c 'a-z0-9-' '-')
+  value=$(echo "${value}" | tr -s '-')
+  value=$(echo "${value}" | sed 's/^-*//; s/-*$//')
+  if [[ -z "${value}" ]]; then
+    value="unknown"
+  fi
+  echo "${value}"
+}
+
+sanitize_bucket_name() {
+  local value="$1"
+  value=$(echo "${value}" | tr '[:upper:]' '[:lower:]')
+  value=$(echo "${value}" | tr -c 'a-z0-9-' '-')
+  value=$(echo "${value}" | tr -s '-')
+  value=$(echo "${value}" | sed 's/^-*//; s/-*$//')
+  if [[ -z "${value}" ]]; then
+    value="tfstate-${AWS_REGION}"
+  fi
+  while ((${#value} < 3)); do
+    value="${value}x"
+  done
+  if ((${#value} > 63)); then
+    value=${value:0:63}
+    value=$(echo "${value}" | sed 's/-*$//')
+    while ((${#value} < 3)); do
+      value="${value}x"
+    done
+  fi
+  echo "${value}"
+}
+
 REPO_SLUG=${GITHUB_REPOSITORY:-$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")}
 REPO_SLUG=${REPO_SLUG//\//-}
-STATE_BUCKET="tfstate-${REPO_SLUG}-${AWS_REGION}"
+REPO_SLUG=$(sanitize_component "${REPO_SLUG}")
+STATE_BUCKET_RAW="tfstate-${REPO_SLUG}-${AWS_REGION}"
+STATE_BUCKET=$(sanitize_bucket_name "${STATE_BUCKET_RAW}")
 LOCK_TABLE="tf-locks"
 
 ensure_bucket() {
