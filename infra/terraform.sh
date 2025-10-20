@@ -432,6 +432,12 @@ cleanup_exported_tf_vars() {
   EXPORTED_TF_VARS=()
 }
 
+cleanup_orphaned_resources() {
+  if ! "${SCRIPT_DIR}/cleanup-orphans.sh"; then
+    echo "Warning: failed to clean up orphaned resources." >&2
+  fi
+}
+
 run_command() {
   case "$COMMAND" in
     plan)
@@ -445,7 +451,15 @@ run_command() {
       export_tf_vars_from_extra_args
       ensure_ready
       if [[ "${RECREATE_FLAG}" == "true" ]]; then
-        terraform destroy -auto-approve "${EXTRA_ARGS[@]}"
+        destroy_exit=0
+        if ! terraform destroy -auto-approve "${EXTRA_ARGS[@]}"; then
+          destroy_exit=$?
+        fi
+        cleanup_orphaned_resources
+        if [[ "${destroy_exit}" -ne 0 ]]; then
+          cleanup_exported_tf_vars
+          exit "${destroy_exit}"
+        fi
         terraform apply -auto-approve "${EXTRA_ARGS[@]}"
       else
         terraform apply "${EXTRA_ARGS[@]}"
@@ -457,8 +471,15 @@ run_command() {
     destroy)
       export_tf_vars_from_extra_args
       ensure_ready
-      terraform destroy "${EXTRA_ARGS[@]}"
+      destroy_exit=0
+      if ! terraform destroy "${EXTRA_ARGS[@]}"; then
+        destroy_exit=$?
+      fi
       cleanup_exported_tf_vars
+      cleanup_orphaned_resources
+      if [[ "${destroy_exit}" -ne 0 ]]; then
+        exit "${destroy_exit}"
+      fi
       ;;
     *)
       echo "Unsupported command: ${COMMAND}" >&2
