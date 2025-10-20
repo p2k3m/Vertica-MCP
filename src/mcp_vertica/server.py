@@ -4,6 +4,7 @@ import logging
 import os
 import platform
 import time
+from ipaddress import ip_address
 from contextlib import suppress
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable
@@ -171,16 +172,89 @@ def _query_execution(query: str) -> Dict[str, Any]:
                 cursor.close()
 
 
+def _resolve_listen_host() -> str:
+    for key in ("LISTEN_HOST", "MCP_LISTEN_HOST", "BIND_HOST", "MCP_BIND_HOST"):
+        value = os.environ.get(key)
+        if value and value.strip():
+            return value.strip()
+
+    legacy_host = os.environ.get("HOST")
+    if legacy_host and legacy_host.strip():
+        candidate = legacy_host.strip()
+        if _is_socket_address(candidate):
+            return candidate
+        logger.warning(
+            "Ignoring HOST environment variable value %r; set LISTEN_HOST to override the bind address.",
+            legacy_host,
+        )
+
+    return "0.0.0.0"
+
+
+def _resolve_listen_port() -> int:
+    for key in ("LISTEN_PORT", "MCP_LISTEN_PORT", "BIND_PORT", "MCP_BIND_PORT", "PORT"):
+        value = os.environ.get(key)
+        port = _coerce_port(value, key)
+        if port is not None:
+            return port
+
+    return 8000
+
+
+def _is_socket_address(value: str) -> bool:
+    if not value:
+        return False
+
+    candidate = value.strip()
+    if not candidate:
+        return False
+
+    if candidate.lower() == "localhost":
+        return True
+
+    with suppress(ValueError):
+        ip_address(candidate)
+        return True
+
+    return False
+
+
+def _coerce_port(raw: str | None, key: str) -> int | None:
+    if raw is None:
+        return None
+
+    candidate = raw.strip()
+    if not candidate:
+        return None
+
+    try:
+        port = int(candidate)
+    except ValueError:
+        logger.warning(
+            "Ignoring non-integer %s value %r when determining listen port.",
+            key,
+            raw,
+        )
+        return None
+
+    if not (0 < port < 65536):
+        logger.warning(
+            "%s value %r is outside the valid TCP port range; ignoring.",
+            key,
+            raw,
+        )
+        return None
+
+    return port
+
+
 def _run_server() -> None:
     """Run the MCP API using uvicorn."""
 
     import uvicorn  # Imported lazily so unit tests without uvicorn still pass
 
-    host = os.environ.get("HOST", "0.0.0.0")
-    try:
-        port = int(os.environ.get("PORT", "8000"))
-    except ValueError:
-        port = 8000
+    host = _resolve_listen_host()
+    port = _resolve_listen_port()
 
     uvicorn.run("mcp_vertica.server:app", host=host, port=port, log_level="info")
 
