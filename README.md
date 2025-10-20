@@ -45,6 +45,17 @@ applies the desired state in one run:
 AWS_REGION=us-east-1 ./terraform.sh --recreate apply -- -auto-approve
 ```
 
+### Systemd service configuration
+
+The EC2 host provisions a `mcp.service` systemd unit that keeps the Dockerized
+MCP API online. The unit pulls the latest container image, removes any failed
+`mcp` container instance, and then launches the service with
+`--restart unless-stopped` so Docker maintains the container lifecycle. Systemd
+adds another layer of resilience with `Restart=always` and a five-second
+`RestartSec` back-off. Environment variables are sourced from the generated
+`/etc/mcp.env` file before the service starts, and `ExecStartPre` health checks
+ensure all required database settings are present before the container runs.
+
 ## Deployment endpoints
 
 This section is automatically managed by the deployment workflow. Do not edit
