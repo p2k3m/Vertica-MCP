@@ -120,6 +120,7 @@ jobs:
           if [ -z "$DB_PORT" ]; then
             DB_PORT=5433
           fi
+          USE_CLOUDFRONT="${{ github.event_name == 'workflow_dispatch' && inputs.use_cloudfront || 'false' }}"
           set +e
           terraform plan -detailed-exitcode \
             -var="aws_region=${{ env.AWS_REGION }}" \
@@ -130,7 +131,7 @@ jobs:
             -var="db_user=${{ secrets.MCP_DB_USER }}" \
             -var="db_password=${{ secrets.MCP_DB_PASSWORD }}" \
             -var="db_name=${{ secrets.MCP_DB_NAME }}" \
-            -var="use_cloudfront=${{ inputs.use_cloudfront }}"
+            -var="use_cloudfront=${USE_CLOUDFRONT}"
           code=$?
           set -e
           echo "plan_exit=$code" >> "$GITHUB_OUTPUT"
@@ -149,6 +150,7 @@ jobs:
           if [ -z "$DB_PORT" ]; then
             DB_PORT=5433
           fi
+          USE_CLOUDFRONT="${{ github.event_name == 'workflow_dispatch' && inputs.use_cloudfront || 'false' }}"
           terraform apply -auto-approve \
             -var="aws_region=${{ env.AWS_REGION }}" \
             -var="account_id=${{ env.AWS_ACCOUNT_ID }}" \
@@ -158,7 +160,7 @@ jobs:
             -var="db_user=${{ secrets.MCP_DB_USER }}" \
             -var="db_password=${{ secrets.MCP_DB_PASSWORD }}" \
             -var="db_name=${{ secrets.MCP_DB_NAME }}" \
-            -var="use_cloudfront=${{ inputs.use_cloudfront }}"
+            -var="use_cloudfront=${USE_CLOUDFRONT}"
 
       - name: Capture TF outputs
         id: out
