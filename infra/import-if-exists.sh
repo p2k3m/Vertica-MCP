@@ -51,7 +51,14 @@ import_parameter_if_missing() {
   if aws ssm get-parameter --name "${A2A_PARAM_NAME}" --with-decryption >/dev/null 2>&1; then
     if ! has_state_entry "aws_ssm_parameter.mcp_a2a"; then
       echo "Importing existing SSM parameter ${A2A_PARAM_NAME} into state" >&2
-      terraform import aws_ssm_parameter.mcp_a2a "${A2A_PARAM_NAME}" >/dev/null
+      if ! import_output=$(terraform import aws_ssm_parameter.mcp_a2a "${A2A_PARAM_NAME}" 2>&1); then
+        if grep -q "Configuration for import target does not exist" <<<"${import_output}"; then
+          echo "Skipping import for ${A2A_PARAM_NAME} because the Terraform configuration disables the parameter" >&2
+        else
+          echo "${import_output}" >&2
+          return 1
+        fi
+      fi
     fi
   fi
 }
