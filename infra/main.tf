@@ -185,7 +185,6 @@ resource "aws_ssm_document" "mcp_run" {
   name            = "vertica-mcp-run"
   document_type   = "Command"
   document_format = "JSON"
-  force           = true
 
   content = jsonencode({
     schemaVersion = "2.2"
