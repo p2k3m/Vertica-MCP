@@ -124,7 +124,7 @@ ENV
 }
 
 locals {
-  requested_subnet_id = trimspace(coalesce(var.mcp_subnet_id, ""))
+  requested_subnet_id = trimspace(var.mcp_subnet_id == null ? "" : var.mcp_subnet_id)
 }
 
 data "aws_subnet" "requested" {
