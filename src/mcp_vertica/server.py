@@ -5,9 +5,10 @@ import platform
 import time
 from contextlib import suppress
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, Iterable
 
 from fastapi import FastAPI, Request, HTTPException
+from pydantic import BaseModel, Field
 
 from . import pool as pool_module
 from .config import settings
@@ -118,6 +119,59 @@ def _config_diagnostics() -> Dict[str, Any]:
     }
 
 
+def _normalise_rows(rows: Iterable[Any]) -> list[Any]:
+    normalised: list[Any] = []
+    for row in rows:
+        if isinstance(row, (list, tuple)):
+            normalised.append(list(row))
+        else:
+            normalised.append(row)
+    return normalised
+
+
+def _query_execution(query: str) -> Dict[str, Any]:
+    trimmed = (query or "").strip()
+    if not trimmed:
+        return {"ok": False, "error": "Query must not be empty"}
+    if not trimmed.upper().startswith("SELECT "):
+        return {"ok": False, "error": "Only SELECT statements are allowed"}
+
+    start = time.perf_counter()
+    cursor = None
+    try:
+        with pool_module.get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute(trimmed)
+            rows = cursor.fetchall()
+    except Exception as exc:  # pragma: no cover - exercised in unit tests
+        latency = round((time.perf_counter() - start) * 1000, 3)
+        if cursor is not None:
+            with suppress(Exception):
+                cursor.close()
+        return {
+            "ok": False,
+            "latency_ms": latency,
+            "error": str(exc),
+            "exception": exc.__class__.__name__,
+        }
+    else:
+        latency = round((time.perf_counter() - start) * 1000, 3)
+        return {
+            "ok": True,
+            "latency_ms": latency,
+            "rows": _normalise_rows(rows),
+            "row_count": len(rows),
+        }
+    finally:
+        if cursor is not None:
+            with suppress(Exception):
+                cursor.close()
+
+
+class QueryRequest(BaseModel):
+    query: str = Field(..., description="SQL SELECT statement to execute")
+
+
 @app.get("/healthz")
 async def healthz():
     checks = {"database": _database_check()}
@@ -132,6 +186,19 @@ async def healthz():
         "checks": checks,
         "diagnostics": diagnostics,
     }
+
+
+@app.get("/diagnostics")
+async def diagnostics():
+    return {
+        "runtime": _runtime_diagnostics(),
+        "config": _config_diagnostics(),
+    }
+
+
+@app.post("/query")
+async def execute_query_endpoint(payload: QueryRequest):
+    return _query_execution(payload.query)
 
 
 @app.middleware("http")
