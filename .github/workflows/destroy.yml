@@ -1,0 +1,107 @@
+name: Destroy MCP infrastructure (destroy)
+
+on:
+  workflow_dispatch:
+    inputs:
+      use_cloudfront:
+        type: boolean
+        description: Enable CloudFront distribution flag (ensures consistent destroy variables)
+        default: false
+
+concurrency:
+  group: build-deploy-mcp
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fail-fast prerequisites
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for var in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION AWS_ACCOUNT_ID; do
+            if [ -z "${!var:-}" ]; then
+              missing+=("$var")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "Missing required GitHub secrets: ${missing[*]}" >&2
+            exit 1
+          fi
+
+          aws sts get-caller-identity >/dev/null
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Bootstrap Terraform backend
+        working-directory: infra
+        run: ./backend-bootstrap.sh
+
+      - name: Terraform init
+        working-directory: infra
+        run: terraform init -upgrade
+
+      - name: Import existing resources (if present)
+        working-directory: infra
+        run: bash import-if-exists.sh || true
+
+      - name: Terraform destroy
+        working-directory: infra
+        env:
+          DB_HOST: ${{ secrets.MCP_DB_HOST }}
+          DB_PORT: ${{ secrets.MCP_DB_PORT }}
+          DB_USER: ${{ secrets.MCP_DB_USER }}
+          DB_PASSWORD: ${{ secrets.MCP_DB_PASSWORD }}
+          DB_NAME: ${{ secrets.MCP_DB_NAME }}
+          USE_CLOUDFRONT_INPUT: ${{ inputs.use_cloudfront }}
+        run: |
+          set -euo pipefail
+          HOST="$DB_HOST"
+          if [ -z "$HOST" ]; then
+            HOST="127.0.0.1"
+          fi
+          PORT="$DB_PORT"
+          if [ -z "$PORT" ]; then
+            PORT=5433
+          fi
+          if [ -z "$USE_CLOUDFRONT_INPUT" ] || [ "$USE_CLOUDFRONT_INPUT" = "" ]; then
+            USE_CLOUDFRONT_INPUT=false
+          fi
+          terraform destroy -auto-approve \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="account_id=${{ env.AWS_ACCOUNT_ID }}" \
+            -var="http_token=${{ secrets.MCP_HTTP_TOKEN }}" \
+            -var="db_host=$HOST" \
+            -var="db_port=$PORT" \
+            -var="db_user=$DB_USER" \
+            -var="db_password=$DB_PASSWORD" \
+            -var="db_name=$DB_NAME" \
+            -var="use_cloudfront=$USE_CLOUDFRONT_INPUT"
