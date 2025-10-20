@@ -83,8 +83,13 @@ resource "aws_ssm_document" "mcp_run" {
 resource "aws_ssm_association" "mcp_assoc" {
   name             = aws_ssm_document.mcp_run.name
   association_name = "vertica-mcp-singleton"
-  targets          = [{ key = "InstanceIds", values = [local.db_instance_id] }]
-  depends_on       = [aws_ssm_document.mcp_run]
+
+  targets {
+    key    = "InstanceIds"
+    values = [local.db_instance_id]
+  }
+
+  depends_on = [aws_ssm_document.mcp_run]
 }
 
 # Optional: CloudFront HTTPS in front of EC2:8000
@@ -146,6 +151,7 @@ resource "aws_cloudfront_distribution" "mcp" {
     custom_origin_config {
       http_port                = 8000
       https_port               = 8000
+      origin_ssl_protocols     = ["TLSv1.2"]
       origin_protocol_policy   = "http-only"
       origin_keepalive_timeout = 60
       origin_read_timeout      = 60
