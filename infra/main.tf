@@ -55,6 +55,10 @@ locals {
   container_image_tag       = trimspace(var.image_tag) == "" ? "latest" : trimspace(var.image_tag)
   container_image           = "${local.container_image_name}:${local.container_image_tag}"
   mcp_instance_name         = "MCP-Vertica"
+  mcp_tags_base             = {
+    Name    = local.mcp_instance_name
+    Service = "Vertica-MCP"
+  }
   mcp_env_file_path         = "/etc/mcp.env"
   mcp_env_file_contents     = trimspace(<<-ENV
 DB_HOST=${var.db_host}
@@ -180,11 +184,9 @@ resource "aws_security_group" "mcp" {
     ipv6_cidr_blocks = ["::/0"]
   }
 
-  tags = {
-    Name        = local.mcp_instance_name
-    Service     = "Vertica-MCP"
+  tags = merge(local.mcp_tags_base, {
     Environment = "production"
-  }
+  })
 }
 
 resource "aws_security_group_rule" "allow_mcp_to_vertica" {
@@ -218,10 +220,9 @@ resource "aws_iam_role" "mcp" {
     ]
   })
 
-  tags = {
-    Name    = "mcp-vertica-instance-role"
-    Service = "Vertica-MCP"
-  }
+  tags = merge(local.mcp_tags_base, {
+    Name = "mcp-vertica-instance-role"
+  })
 }
 
 resource "aws_iam_role_policy_attachment" "ssm" {
@@ -261,11 +262,9 @@ resource "aws_instance" "mcp" {
     encrypted   = true
   }
 
-  tags = {
-    Name        = local.mcp_instance_name
-    Service     = "Vertica-MCP"
+  tags = merge(local.mcp_tags_base, {
     Environment = "production"
-  }
+  })
 
   depends_on = [aws_security_group_rule.allow_mcp_to_vertica]
 }
