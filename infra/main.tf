@@ -223,13 +223,17 @@ resource "aws_cloudfront_cache_policy" "no_cache" {
   }
 }
 
-resource "aws_cloudfront_origin_request_policy" "all_hdrs" {
+resource "aws_cloudfront_origin_request_policy" "auth_header" {
   count = local.use_cloudfront ? 1 : 0
 
-  name = "mcp-forward-all-headers"
+  name = "mcp-forward-authorization"
 
   headers_config {
-    header_behavior = "allViewerAndWhitelistCloudFront"
+    header_behavior = "whitelist"
+
+    headers {
+      items = ["Authorization"]
+    }
   }
 
   cookies_config {
@@ -267,7 +271,7 @@ resource "aws_cloudfront_distribution" "mcp" {
     allowed_methods          = ["GET", "HEAD", "OPTIONS", "POST"]
     cached_methods           = ["GET", "HEAD"]
     cache_policy_id          = aws_cloudfront_cache_policy.no_cache[0].id
-    origin_request_policy_id = aws_cloudfront_origin_request_policy.all_hdrs[0].id
+    origin_request_policy_id = aws_cloudfront_origin_request_policy.auth_header[0].id
   }
 
   restrictions {
