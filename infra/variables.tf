@@ -56,3 +56,9 @@ variable "use_cloudfront" {
   type    = any
   default = false
 }
+
+variable "a2a_ssm_parameter_name" {
+  type        = string
+  description = "SSM parameter name that stores MCP A2A metadata (set to empty to disable)"
+  default     = "/vertica/mcp/a2a"
+}

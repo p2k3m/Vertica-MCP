@@ -73,6 +73,65 @@ locals {
   association_targets = local.db_instance_id == null ? [] : [local.db_instance_id]
 }
 
+locals {
+  mcp_public_ip       = local.db_instance_id == null ? "" : try(data.aws_instance.dbi[0].public_ip, "")
+  mcp_http_base       = local.mcp_public_ip == "" ? "" : "http://${local.mcp_public_ip}:8000"
+  mcp_http_endpoint   = local.mcp_http_base == "" ? null : "${local.mcp_http_base}/"
+  mcp_http_healthz    = local.mcp_http_base == "" ? null : "${local.mcp_http_base}/healthz"
+  mcp_http_sse        = local.mcp_http_base == "" ? null : "${local.mcp_http_base}/sse"
+  mcp_https_endpoint  = length(aws_cloudfront_distribution.mcp) > 0 ? "https://${aws_cloudfront_distribution.mcp[0].domain_name}/" : null
+  mcp_https_sse       = length(aws_cloudfront_distribution.mcp) > 0 ? "https://${aws_cloudfront_distribution.mcp[0].domain_name}/sse" : null
+  http_token_trimmed  = trimspace(var.http_token)
+  mcp_auth_header     = local.http_token_trimmed == "" ? null : {
+    header = "Authorization"
+    value  = "Bearer ${local.http_token_trimmed}"
+    token  = local.http_token_trimmed
+  }
+  db_env_snippet = {
+    DB_HOST = var.db_host
+    DB_PORT = tostring(var.db_port)
+    DB_USER = var.db_user
+    DB_PASSWORD = var.db_password
+    DB_NAME = var.db_name
+  }
+  db_snippet = {
+    host          = var.db_host
+    port          = var.db_port
+    user          = var.db_user
+    password      = var.db_password
+    name          = var.db_name
+    jdbc_url      = format("jdbc:vertica://%s:%d/%s", var.db_host, var.db_port, var.db_name)
+    connection_uri = format(
+      "vertica://%s:%s@%s:%d/%s",
+      var.db_user,
+      var.db_password,
+      var.db_host,
+      var.db_port,
+      var.db_name,
+    )
+    cli_example = format(
+      "vsql -h %s -p %d -U %s -d %s",
+      var.db_host,
+      var.db_port,
+      var.db_user,
+      var.db_name,
+    )
+    environment = local.db_env_snippet
+  }
+  a2a_payload = {
+    endpoints = {
+      http       = local.mcp_http_endpoint
+      healthz    = local.mcp_http_healthz
+      sse        = local.mcp_http_sse
+      https      = local.mcp_https_endpoint
+      https_sse  = local.mcp_https_sse
+    }
+    auth      = local.mcp_auth_header
+    database  = local.db_snippet
+  }
+  a2a_parameter_name = trimspace(var.a2a_ssm_parameter_name)
+}
+
 resource "terraform_data" "db_instance_id_validation" {
   count = local.db_instance_id == null ? 0 : 1
 
@@ -250,4 +309,19 @@ output "cloudfront_domain" {
 
 output "mcp_https" {
   value = length(aws_cloudfront_distribution.mcp) > 0 ? "https://${aws_cloudfront_distribution.mcp[0].domain_name}/" : ""
+}
+
+output "mcp_a2a_metadata" {
+  value     = local.a2a_payload
+  sensitive = true
+}
+
+resource "aws_ssm_parameter" "mcp_a2a" {
+  count      = local.a2a_parameter_name == "" ? 0 : 1
+  name       = local.a2a_parameter_name
+  description = "Vertica MCP machine-readable endpoints"
+  type       = "SecureString"
+  overwrite  = true
+  value      = jsonencode(local.a2a_payload)
+  depends_on = [aws_ssm_document.mcp_run]
 }

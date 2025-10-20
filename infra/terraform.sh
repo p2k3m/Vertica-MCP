@@ -26,7 +26,10 @@ USAGE
 }
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd)
 cd "${SCRIPT_DIR}"
+
+A2A_ARTIFACT_PATH=${A2A_ARTIFACT_PATH:-"${REPO_ROOT}/build/mcp-a2a.json"}
 
 if [[ $# -eq 0 ]]; then
   usage
@@ -106,6 +109,44 @@ ensure_ready() {
   import_existing_resources
 }
 
+write_a2a_artifact() {
+  local tmp_file
+  tmp_file=$(mktemp)
+
+  if ! terraform output -json >"${tmp_file}" 2>/dev/null; then
+    rm -f "${tmp_file}"
+    return
+  fi
+
+  python <<'PY' "${tmp_file}" "${A2A_ARTIFACT_PATH}"
+import json
+import pathlib
+import sys
+
+outputs_path = pathlib.Path(sys.argv[1])
+artifact_path = pathlib.Path(sys.argv[2])
+
+try:
+    outputs = json.loads(outputs_path.read_text())
+except json.JSONDecodeError:
+    sys.exit(0)
+
+metadata = outputs.get("mcp_a2a_metadata")
+if not isinstance(metadata, dict):
+    sys.exit(0)
+
+value = metadata.get("value")
+if value in (None, ""):
+    sys.exit(0)
+
+artifact_path.parent.mkdir(parents=True, exist_ok=True)
+artifact_path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+print(f"Wrote MCP A2A artifact to {artifact_path}", file=sys.stderr)
+PY
+
+  rm -f "${tmp_file}"
+}
+
 run_command() {
   case "$COMMAND" in
     plan)
@@ -120,6 +161,7 @@ run_command() {
       else
         terraform apply "${EXTRA_ARGS[@]}"
       fi
+      write_a2a_artifact
       ;;
     destroy)
       ensure_ready
