@@ -1,8 +1,9 @@
 # Pin to a specific patch release to avoid intermittent Docker Hub
 # manifest resolution failures that occurred with the floating 3.12-slim tag.
 # 3.12.4-slim started returning 500 errors when fetching its manifest, so
-# advance the pin to the latest stable patch release.
-FROM python:3.12.5-slim
+# advance the pin to the latest stable patch release. Use the AWS ECR Public
+# mirror to avoid 503 errors from Docker Hub's token service.
+FROM public.ecr.aws/docker/library/python:3.12.5-slim
 WORKDIR /app
 COPY pyproject.toml /app/
 RUN pip install --no-cache-dir uv && \
