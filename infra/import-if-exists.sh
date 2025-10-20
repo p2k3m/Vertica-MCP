@@ -69,7 +69,14 @@ import_ecr_repository_if_missing() {
   if aws ecr describe-repositories --repository-names "${repo_name}" >/dev/null 2>&1; then
     if ! has_state_entry "aws_ecr_repository.vertica_mcp"; then
       echo "Importing existing ECR repository ${repo_name} into state" >&2
-      terraform import aws_ecr_repository.vertica_mcp "${repo_name}" >/dev/null
+      if ! import_output=$(terraform import aws_ecr_repository.vertica_mcp "${repo_name}" 2>&1); then
+        if grep -q "Configuration for import target does not exist" <<<"${import_output}"; then
+          echo "Skipping import for ${repo_name} because the Terraform configuration disables the repository" >&2
+        else
+          echo "${import_output}" >&2
+          return 1
+        fi
+      fi
     fi
   fi
 }
