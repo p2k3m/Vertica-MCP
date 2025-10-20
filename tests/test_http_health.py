@@ -5,6 +5,7 @@ from contextlib import contextmanager
 
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -188,3 +189,30 @@ def test_protected_routes_require_bearer_token(monkeypatch, client):
     )
     assert response.status_code == 200
     assert call_next.called
+
+
+def test_startup_allows_vertica_failures(monkeypatch):
+    """Service startup should not abort if Vertica is unreachable."""
+
+    attempts = {"count": 0}
+
+    def failing_database_check():
+        attempts["count"] += 1
+        return {
+            "ok": False,
+            "error": "no connection",
+        }
+
+    monkeypatch.setattr(server, "_database_check", failing_database_check)
+
+    with TestClient(server.app) as degraded_client:
+        # Startup should have attempted the connectivity probe once.
+        assert attempts["count"] == 1
+
+        response = degraded_client.get("/healthz")
+        assert response.status_code == 200
+
+        payload = response.json()
+        # Without ping-vertica the health endpoint remains optimistic.
+        assert payload["ok"] is True
+        assert payload["checks"]["database"]["skipped"] is True
