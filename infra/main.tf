@@ -326,13 +326,15 @@ resource "aws_instance" "mcp" {
 }
 
 locals {
-  mcp_public_ip      = try(aws_instance.mcp.public_ip, "")
-  mcp_http_base      = local.mcp_public_ip == "" ? "" : "http://${local.mcp_public_ip}:8000"
-  mcp_http_endpoint  = local.mcp_http_base == "" ? null : "${local.mcp_http_base}/"
-  mcp_http_healthz   = local.mcp_http_base == "" ? null : "${local.mcp_http_base}/healthz"
-  mcp_http_sse       = local.mcp_http_base == "" ? null : "${local.mcp_http_base}/sse"
-  mcp_https_endpoint = length(aws_cloudfront_distribution.mcp) > 0 ? "https://${aws_cloudfront_distribution.mcp[0].domain_name}/" : null
-  mcp_https_sse      = length(aws_cloudfront_distribution.mcp) > 0 ? "https://${aws_cloudfront_distribution.mcp[0].domain_name}/sse" : null
+  mcp_public_ip       = try(aws_instance.mcp.public_ip, "")
+  mcp_public_dns      = try(aws_instance.mcp.public_dns, "")
+  mcp_http_base       = local.mcp_public_ip == "" ? "" : "http://${local.mcp_public_ip}:8000"
+  mcp_http_endpoint   = local.mcp_http_base == "" ? null : "${local.mcp_http_base}/"
+  mcp_http_healthz    = local.mcp_http_base == "" ? null : "${local.mcp_http_base}/healthz"
+  mcp_http_sse        = local.mcp_http_base == "" ? null : "${local.mcp_http_base}/sse"
+  mcp_https_endpoint  = length(aws_cloudfront_distribution.mcp) > 0 ? "https://${aws_cloudfront_distribution.mcp[0].domain_name}/" : null
+  mcp_https_healthz   = length(aws_cloudfront_distribution.mcp) > 0 ? "https://${aws_cloudfront_distribution.mcp[0].domain_name}/healthz" : null
+  mcp_https_sse       = length(aws_cloudfront_distribution.mcp) > 0 ? "https://${aws_cloudfront_distribution.mcp[0].domain_name}/sse" : null
   mcp_auth_header    = local.http_token_trimmed == "" ? null : {
     header = "Authorization"
     value  = "Bearer ${local.http_token_trimmed}"
@@ -364,11 +366,14 @@ locals {
   }
   a2a_payload = {
     endpoints = {
-      http      = local.mcp_http_endpoint
-      healthz   = local.mcp_http_healthz
-      sse       = local.mcp_http_sse
-      https     = local.mcp_https_endpoint
-      https_sse = local.mcp_https_sse
+      http        = local.mcp_http_endpoint
+      healthz     = local.mcp_http_healthz
+      sse         = local.mcp_http_sse
+      https       = local.mcp_https_endpoint
+      https_sse   = local.mcp_https_sse
+      https_healthz = local.mcp_https_healthz
+      public_ip   = local.mcp_public_ip
+      public_dns  = local.mcp_public_dns
     }
     auth     = local.mcp_auth_header
     database = local.db_snippet
@@ -525,6 +530,10 @@ output "mcp_public_ip" {
   value = local.mcp_public_ip
 }
 
+output "mcp_public_dns" {
+  value = local.mcp_public_dns
+}
+
 output "mcp_endpoint" {
   value = try("http://${aws_instance.mcp.public_ip}:8000/", "")
 }
@@ -543,6 +552,32 @@ output "cloudfront_domain" {
 
 output "mcp_https" {
   value = length(aws_cloudfront_distribution.mcp) > 0 ? "https://${aws_cloudfront_distribution.mcp[0].domain_name}/" : ""
+}
+
+output "mcp_https_health" {
+  value = length(aws_cloudfront_distribution.mcp) > 0 ? "https://${aws_cloudfront_distribution.mcp[0].domain_name}/healthz" : ""
+}
+
+output "mcp_https_sse" {
+  value = length(aws_cloudfront_distribution.mcp) > 0 ? "https://${aws_cloudfront_distribution.mcp[0].domain_name}/sse" : ""
+}
+
+output "mcp_endpoints" {
+  value = {
+    direct = {
+      base_url   = local.mcp_http_endpoint
+      health_url = local.mcp_http_healthz
+      sse_url    = local.mcp_http_sse
+      public_ip  = local.mcp_public_ip
+      public_dns = local.mcp_public_dns
+    }
+    cloudfront = length(aws_cloudfront_distribution.mcp) > 0 ? {
+      domain     = aws_cloudfront_distribution.mcp[0].domain_name
+      base_url   = local.mcp_https_endpoint
+      health_url = local.mcp_https_healthz
+      sse_url    = local.mcp_https_sse
+    } : null
+  }
 }
 
 output "mcp_a2a_metadata" {

@@ -44,3 +44,20 @@ applies the desired state in one run:
 ```bash
 AWS_REGION=us-east-1 ./terraform.sh --recreate apply -- -auto-approve
 ```
+
+## Deployment endpoints
+
+This section is automatically managed by the deployment workflow. Do not edit
+manually.
+
+<!-- BEGIN MCP ENDPOINTS -->
+
+**Direct EC2 (HTTP on port 8000)**  
+* Not available (deployment not yet provisioned).
+
+**CloudFront (HTTPS)**  
+* Not enabled for this deployment.
+
+_Last updated: 2025-10-20 13:23:09Z_
+
+<!-- END MCP ENDPOINTS -->

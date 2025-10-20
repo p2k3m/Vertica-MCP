@@ -36,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
-      contents: read
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -210,6 +210,12 @@ jobs:
         working-directory: infra
         run: |
           set -euo pipefail
+          echo "mcp_public_ip=$(terraform output -raw mcp_public_ip)" >> "$GITHUB_OUTPUT"
+          if terraform output -raw mcp_public_dns >/tmp/mcp_public_dns 2>/dev/null; then
+            echo "mcp_public_dns=$(cat /tmp/mcp_public_dns)" >> "$GITHUB_OUTPUT"
+          else
+            echo "mcp_public_dns=" >> "$GITHUB_OUTPUT"
+          fi
           echo "mcp_endpoint=$(terraform output -raw mcp_endpoint)" >> "$GITHUB_OUTPUT"
           echo "mcp_health=$(terraform output -raw mcp_health)" >> "$GITHUB_OUTPUT"
           echo "mcp_sse=$(terraform output -raw mcp_sse)" >> "$GITHUB_OUTPUT"
@@ -218,17 +224,32 @@ jobs:
           else
             echo "cloudfront_domain=" >> "$GITHUB_OUTPUT"
           fi
+          if terraform output -raw mcp_https >/tmp/mcp_https 2>/dev/null; then
+            echo "mcp_https=$(cat /tmp/mcp_https)" >> "$GITHUB_OUTPUT"
+          else
+            echo "mcp_https=" >> "$GITHUB_OUTPUT"
+          fi
+          if terraform output -raw mcp_https_health >/tmp/mcp_https_health 2>/dev/null; then
+            echo "mcp_https_health=$(cat /tmp/mcp_https_health)" >> "$GITHUB_OUTPUT"
+          else
+            echo "mcp_https_health=" >> "$GITHUB_OUTPUT"
+          fi
+          if terraform output -raw mcp_https_sse >/tmp/mcp_https_sse 2>/dev/null; then
+            echo "mcp_https_sse=$(cat /tmp/mcp_https_sse)" >> "$GITHUB_OUTPUT"
+          else
+            echo "mcp_https_sse=" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Publish MCP outputs (summary + artifact + SSM Param)
         env:
           SSM_PARAMETER_NAME: ${{ secrets.MCP_SSM_PARAMETER_NAME }}
         run: |
           set -euo pipefail
-          DIRECT="$(terraform -chdir=infra output -raw mcp_endpoint)"
-          CF="${{ steps.out.outputs.cloudfront_domain }}"
+          DIRECT="${{ steps.out.outputs.mcp_endpoint }}"
+          CF_DOMAIN="${{ steps.out.outputs.cloudfront_domain }}"
           ENDPOINT="$DIRECT"
-          if [ -n "$CF" ]; then
-            ENDPOINT="https://$CF/"
+          if [ -n "$CF_DOMAIN" ]; then
+            ENDPOINT="https://$CF_DOMAIN/"
           fi
           DB_HOST="${{ secrets.MCP_DB_HOST }}"
           if [ -z "$DB_HOST" ]; then
@@ -247,9 +268,15 @@ jobs:
             --arg db_name "${{ secrets.MCP_DB_NAME }}" \
             --argjson db_port "$DB_PORT" \
             '{
-              mcp_endpoint_url: $endpoint,
-              mcp_health_url: ($endpoint + "healthz"),
-              mcp_sse_url: ($endpoint + "sse"),
+              mcp_http_endpoint_url: $DIRECT,
+              mcp_http_health_url: "${{ steps.out.outputs.mcp_health }}",
+              mcp_http_sse_url: "${{ steps.out.outputs.mcp_sse }}",
+              mcp_public_ip: "${{ steps.out.outputs.mcp_public_ip }}",
+              mcp_public_dns: "${{ steps.out.outputs.mcp_public_dns }}",
+              mcp_https_endpoint_url: "${{ steps.out.outputs.mcp_https }}",
+              mcp_https_health_url: "${{ steps.out.outputs.mcp_https_health }}",
+              mcp_https_sse_url: "${{ steps.out.outputs.mcp_https_sse }}",
+              preferred_endpoint_url: $endpoint,
               mcp_auth_header: ("Bearer " + $http_token),
               db_host: $db_host,
               db_port: $db_port,
@@ -264,6 +291,42 @@ jobs:
           if [ -n "$SSM_PARAMETER_NAME" ]; then
             aws ssm put-parameter --name "$SSM_PARAMETER_NAME" --type SecureString --value "$(cat mcp_outputs.json)" --overwrite
           fi
+
+      - name: Update README with deployment endpoints
+        if: github.event_name == 'push'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HTTP_URL: ${{ steps.out.outputs.mcp_endpoint }}
+          HEALTH_URL: ${{ steps.out.outputs.mcp_health }}
+          SSE_URL: ${{ steps.out.outputs.mcp_sse }}
+          PUBLIC_IP: ${{ steps.out.outputs.mcp_public_ip }}
+          PUBLIC_DNS: ${{ steps.out.outputs.mcp_public_dns }}
+          HTTPS_URL: ${{ steps.out.outputs.mcp_https }}
+          HTTPS_HEALTH_URL: ${{ steps.out.outputs.mcp_https_health }}
+          HTTPS_SSE_URL: ${{ steps.out.outputs.mcp_https_sse }}
+          CLOUDFRONT_DOMAIN: ${{ steps.out.outputs.cloudfront_domain }}
+        run: |
+          set -euo pipefail
+          python3 infra/update_readme.py \
+            --readme README.md \
+            --http-url "$HTTP_URL" \
+            --health-url "$HEALTH_URL" \
+            --sse-url "$SSE_URL" \
+            --public-ip "$PUBLIC_IP" \
+            --public-dns "$PUBLIC_DNS" \
+            --https-url "$HTTPS_URL" \
+            --https-health-url "$HTTPS_HEALTH_URL" \
+            --https-sse-url "$HTTPS_SSE_URL" \
+            --cloudfront-domain "$CLOUDFRONT_DOMAIN"
+          if git diff --quiet README.md; then
+            echo "README already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git commit -m "docs: update deployment endpoints"
+          git push
 
       - name: Upload MCP outputs artifact
         uses: actions/upload-artifact@v4
