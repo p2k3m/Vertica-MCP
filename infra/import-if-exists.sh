@@ -50,6 +50,18 @@ import_parameter_if_missing() {
   fi
 }
 
+import_ecr_repository_if_missing() {
+  local repo_name="vertica-mcp"
+
+  if aws ecr describe-repositories --repository-names "${repo_name}" >/dev/null 2>&1; then
+    if ! has_state_entry "aws_ecr_repository.vertica_mcp"; then
+      echo "Importing existing ECR repository ${repo_name} into state" >&2
+      terraform import aws_ecr_repository.vertica_mcp "${repo_name}" >/dev/null
+    fi
+  fi
+}
+
 import_document_if_missing
 import_association_if_missing
 import_parameter_if_missing
+import_ecr_repository_if_missing
