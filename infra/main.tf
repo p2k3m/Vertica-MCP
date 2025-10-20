@@ -56,7 +56,7 @@ locals {
   container_image           = "${local.container_image_name}:${local.container_image_tag}"
   mcp_instance_name         = "MCP-Vertica"
   mcp_env_file_path         = "/etc/mcp.env"
-  mcp_env_file_contents     = trimspace(<<-ENV)
+  mcp_env_file_contents     = trimspace(<<-ENV
 DB_HOST=${var.db_host}
 DB_PORT=${var.db_port}
 DB_USER=${var.db_user}
@@ -64,6 +64,7 @@ DB_PASSWORD=${var.db_password}
 DB_NAME=${var.db_name}
 MCP_HTTP_TOKEN=${var.http_token}
 ENV
+  )
   mcp_env_file_base64       = base64encode(local.mcp_env_file_contents)
   mcp_bootstrap_user_data   = <<-USERDATA
     #!/bin/bash
