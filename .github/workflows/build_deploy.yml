@@ -22,6 +22,7 @@ concurrency:
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
   AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  IMAGE_TAG: ${{ github.sha }}
 
 jobs:
   apply:
@@ -84,6 +85,20 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Vertica MCP image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_NAME: vertica-mcp
+        run: |
+          set -euo pipefail
+          docker build -t "$REGISTRY/$IMAGE_NAME:latest" -t "$REGISTRY/$IMAGE_NAME:${IMAGE_TAG}" .
+          docker push "$REGISTRY/$IMAGE_NAME:latest"
+          docker push "$REGISTRY/$IMAGE_NAME:${IMAGE_TAG}"
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -131,6 +146,7 @@ jobs:
             -var="db_user=${{ secrets.MCP_DB_USER }}" \
             -var="db_password=${{ secrets.MCP_DB_PASSWORD }}" \
             -var="db_name=${{ secrets.MCP_DB_NAME }}" \
+            -var="image_tag=${IMAGE_TAG}" \
             -var="use_cloudfront=${USE_CLOUDFRONT}"
           code=$?
           set -e
@@ -160,6 +176,7 @@ jobs:
             -var="db_user=${{ secrets.MCP_DB_USER }}" \
             -var="db_password=${{ secrets.MCP_DB_PASSWORD }}" \
             -var="db_name=${{ secrets.MCP_DB_NAME }}" \
+            -var="image_tag=${IMAGE_TAG}" \
             -var="use_cloudfront=${USE_CLOUDFRONT}"
 
       - name: Capture TF outputs
