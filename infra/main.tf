@@ -6,6 +6,11 @@ terraform {
       source  = "hashicorp/aws"
       version = ">= 5.60"
     }
+
+    random = {
+      source  = "hashicorp/random"
+      version = ">= 3.6"
+    }
   }
 
 }
@@ -182,7 +187,7 @@ data "aws_instance" "dbi" {
 }
 
 resource "aws_ssm_document" "mcp_run" {
-  name            = "vertica-mcp-run"
+  name            = "vertica-mcp-run-${random_id.ssm_document_suffix.hex}"
   document_type   = "Command"
   document_format = "JSON"
 
@@ -208,6 +213,10 @@ resource "aws_ssm_document" "mcp_run" {
       }
     ]
   })
+}
+
+resource "random_id" "ssm_document_suffix" {
+  byte_length = 4
 }
 
 resource "aws_ssm_association" "mcp_assoc" {
