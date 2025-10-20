@@ -14,8 +14,10 @@ provider "aws" {
 }
 
 locals {
-  container_repository  = "${var.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
-  container_image       = "${local.container_repository}/vertica-mcp:latest"
+  container_repository = "${var.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
+  container_image_name = "${local.container_repository}/vertica-mcp"
+  container_image_tag  = trimspace(var.image_tag) == "" ? "latest" : trimspace(var.image_tag)
+  container_image      = "${local.container_image_name}:${local.container_image_tag}"
   service_unit_contents = <<-UNIT
     [Unit]
     Description=Vertica MCP service
@@ -33,9 +35,9 @@ locals {
     Restart=always
     RestartSec=5
     ExecStartPre=/usr/bin/aws ecr get-login-password --region ${var.aws_region} | /usr/bin/docker login --username AWS --password-stdin ${local.container_repository}
-    ExecStartPre=/usr/bin/docker pull $IMG
+    ExecStartPre=/usr/bin/docker pull ${local.container_image}
     ExecStartPre=/usr/bin/docker rm -f mcp || true
-    ExecStart=/usr/bin/docker run --name mcp -p 8000:8000 --restart unless-stopped -e DB_HOST -e DB_PORT -e DB_USER -e DB_PASSWORD -e DB_NAME -e MCP_HTTP_TOKEN $IMG
+    ExecStart=/usr/bin/docker run --name mcp -p 8000:8000 --restart unless-stopped -e DB_HOST -e DB_PORT -e DB_USER -e DB_PASSWORD -e DB_NAME -e MCP_HTTP_TOKEN ${local.container_image}
     ExecStop=/usr/bin/docker stop mcp
 
     [Install]
@@ -105,6 +107,8 @@ resource "aws_ssm_document" "mcp_run" {
           runCommand = [
             "set -euo pipefail",
             "IMG=${local.container_image}",
+            "/usr/bin/aws ecr get-login-password --region ${var.aws_region} | /usr/bin/docker login --username AWS --password-stdin ${local.container_repository}",
+            "/usr/bin/docker pull $IMG",
             local.service_unit_command,
             "systemctl daemon-reload",
             "systemctl enable --now mcp.service",

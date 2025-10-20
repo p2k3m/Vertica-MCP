@@ -46,6 +46,12 @@ variable "db_name" {
   type = string
 }
 
+variable "image_tag" {
+  type        = string
+  description = "Docker image tag to deploy for Vertica MCP"
+  default     = "latest"
+}
+
 variable "use_cloudfront" {
   type    = any
   default = false
