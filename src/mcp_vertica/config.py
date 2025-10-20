@@ -7,16 +7,27 @@ through this module to avoid duplicated parsing logic.
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Iterable
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _env(key: str, default: str | None = None) -> str | None:
     """Read environment variables with an ``MCP_`` prefix fallback."""
 
     return os.getenv(key, os.getenv(f"MCP_{key}", default))
+
+
+def _require_env(key: str) -> str:
+    value = _env(key)
+    if value is None or value.strip() == "":
+        raise ValueError(f"Missing required environment variable: {key}")
+    return value
 
 
 def _split_csv(value: str | None, fallback: Iterable[str]) -> list[str]:
@@ -28,11 +39,11 @@ def _split_csv(value: str | None, fallback: Iterable[str]) -> list[str]:
 class Settings(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    host: str = Field(default_factory=lambda: _env("DB_HOST", "65.2.48.97"))
-    port: int = Field(default_factory=lambda: int(_env("DB_PORT", "5433")))
-    user: str = Field(default_factory=lambda: _env("DB_USER", "dbadmin"))
-    password: str = Field(default_factory=lambda: _env("DB_PASSWORD", ""))
-    database: str = Field(default_factory=lambda: _env("DB_NAME", "VMart"))
+    host: str = Field(default_factory=lambda: _require_env("DB_HOST"))
+    port: int = Field(default_factory=lambda: int(_require_env("DB_PORT")))
+    user: str = Field(default_factory=lambda: _require_env("DB_USER"))
+    password: str = Field(default_factory=lambda: _require_env("DB_PASSWORD"))
+    database: str = Field(default_factory=lambda: _require_env("DB_NAME"))
 
     max_rows: int = Field(default_factory=lambda: int(_env("MAX_ROWS", "1000")))
     query_timeout_s: int = Field(
@@ -62,6 +73,9 @@ class Settings(BaseModel):
         return {schema.lower() for schema in self.allowed_schemas}
 
 
-settings = Settings()
-
-
+try:
+    settings = Settings()
+except ValidationError as exc:  # pragma: no cover - startup configuration must succeed
+    logging.basicConfig(level=logging.ERROR)
+    LOGGER.error("Critical configuration validation failed: %s", exc)
+    raise

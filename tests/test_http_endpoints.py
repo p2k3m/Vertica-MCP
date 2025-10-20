@@ -2,15 +2,10 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 
-from fastapi.testclient import TestClient
-
 from mcp_vertica import server
 
 
-client = TestClient(server.app)
-
-
-def test_diagnostics_endpoint():
+def test_diagnostics_endpoint(client):
     response = client.get("/diagnostics")
     assert response.status_code == 200
 
@@ -19,7 +14,7 @@ def test_diagnostics_endpoint():
     assert "config" in payload
 
 
-def test_query_endpoint_executes_select(monkeypatch):
+def test_query_endpoint_executes_select(monkeypatch, client):
     events = {"executed": None, "cursor_closed": False}
 
     class DummyCursor:
@@ -53,7 +48,7 @@ def test_query_endpoint_executes_select(monkeypatch):
     assert events["cursor_closed"] is True
 
 
-def test_query_endpoint_rejects_non_select():
+def test_query_endpoint_rejects_non_select(client):
     response = client.post("/query", json={"query": "UPDATE foo SET bar = 1"})
     assert response.status_code == 200
 
@@ -62,7 +57,7 @@ def test_query_endpoint_rejects_non_select():
     assert payload["error"] == "Only SELECT statements are allowed"
 
 
-def test_query_endpoint_reports_errors(monkeypatch):
+def test_query_endpoint_reports_errors(monkeypatch, client):
     @contextmanager
     def fake_get_conn():
         raise RuntimeError("boom")

@@ -1,21 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
+
 import pytest
 from fastapi import HTTPException
-from fastapi.testclient import TestClient
 from starlette.requests import Request
 from starlette.responses import Response
-
-from contextlib import contextmanager
 
 from mcp_vertica import server
 
 
-client = TestClient(server.app)
-
-
-def test_health_endpoint(monkeypatch):
+def test_health_endpoint(monkeypatch, client):
     monkeypatch.setattr(
         server,
         "_database_check",
@@ -32,7 +28,7 @@ def test_health_endpoint(monkeypatch):
         },
     )
 
-    response = client.get("/healthz")
+    response = client.get("/healthz", params={"ping-vertica": "true"})
     assert response.status_code == 200
 
     payload = response.json()
@@ -44,7 +40,7 @@ def test_health_endpoint(monkeypatch):
     assert config["auth"]["http_token_configured"] is bool(server.settings.http_token)
 
 
-def test_health_endpoint_reports_failures(monkeypatch):
+def test_health_endpoint_reports_failures(monkeypatch, client):
     monkeypatch.setattr(
         server,
         "_database_check",
@@ -56,7 +52,7 @@ def test_health_endpoint_reports_failures(monkeypatch):
         },
     )
 
-    response = client.get("/healthz")
+    response = client.get("/healthz", params={"ping-vertica": "true"})
     assert response.status_code == 200
 
     payload = response.json()
@@ -119,7 +115,7 @@ def test_database_check_failure(monkeypatch):
     assert result["exception"] == "RuntimeError"
 
 
-def test_protected_routes_require_bearer_token(monkeypatch):
+def test_protected_routes_require_bearer_token(monkeypatch, client):
     monkeypatch.setattr(server.settings, "http_token", "shhh", raising=False)
 
     def make_request(path: str, headers: list[tuple[bytes, bytes]] | None = None) -> Request:
