@@ -80,8 +80,9 @@ variable "image_tag" {
 }
 
 variable "use_cloudfront" {
-  type    = any
-  default = false
+  type        = any
+  description = "Enable CloudFront distribution in front of the MCP instance (accepts truthy strings as well as booleans)"
+  default     = false
 }
 
 variable "a2a_ssm_parameter_name" {
