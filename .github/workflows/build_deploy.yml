@@ -85,6 +85,16 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Ensure ECR repository exists
+        env:
+          IMAGE_NAME: vertica-mcp
+        run: |
+          set -euo pipefail
+          if ! aws ecr describe-repositories --repository-names "$IMAGE_NAME" >/dev/null 2>&1; then
+            echo "Creating ECR repository $IMAGE_NAME"
+            aws ecr create-repository --repository-name "$IMAGE_NAME" >/dev/null
+          fi
+
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
