@@ -480,6 +480,33 @@ resource "aws_cloudfront_origin_request_policy" "auth_header" {
   }
 }
 
+resource "aws_cloudfront_response_headers_policy" "no_cache" {
+  count = local.use_cloudfront ? 1 : 0
+
+  name    = "mcp-no-cache-response"
+  comment = "Ensure MCP responses are never cached downstream"
+
+  custom_headers_config {
+    items {
+      header   = "Cache-Control"
+      value    = "no-store, no-cache, must-revalidate, max-age=0"
+      override = true
+    }
+
+    items {
+      header   = "Pragma"
+      value    = "no-cache"
+      override = true
+    }
+
+    items {
+      header   = "Expires"
+      value    = "0"
+      override = true
+    }
+  }
+}
+
 resource "aws_cloudfront_distribution" "mcp" {
   count = local.use_cloudfront ? 1 : 0
 
@@ -507,6 +534,7 @@ resource "aws_cloudfront_distribution" "mcp" {
     cached_methods           = ["GET", "HEAD"]
     cache_policy_id          = aws_cloudfront_cache_policy.no_cache[0].id
     origin_request_policy_id = aws_cloudfront_origin_request_policy.auth_header[0].id
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.no_cache[0].id
   }
 
   restrictions {
