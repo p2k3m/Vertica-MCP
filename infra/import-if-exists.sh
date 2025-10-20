@@ -6,6 +6,7 @@ cd "${SCRIPT_DIR}"
 
 DOC_NAME="vertica-mcp-run"
 ASSOCIATION_NAME="vertica-mcp-singleton"
+A2A_PARAM_NAME=${A2A_SSM_PARAMETER_NAME:-/vertica/mcp/a2a}
 
 has_state_entry() {
   local address="$1"
@@ -36,5 +37,19 @@ import_association_if_missing() {
   fi
 }
 
+import_parameter_if_missing() {
+  if [[ -z "${A2A_PARAM_NAME}" ]]; then
+    return
+  fi
+
+  if aws ssm get-parameter --name "${A2A_PARAM_NAME}" --with-decryption >/dev/null 2>&1; then
+    if ! has_state_entry "aws_ssm_parameter.mcp_a2a"; then
+      echo "Importing existing SSM parameter ${A2A_PARAM_NAME} into state" >&2
+      terraform import aws_ssm_parameter.mcp_a2a "${A2A_PARAM_NAME}" >/dev/null
+    fi
+  fi
+}
+
 import_document_if_missing
 import_association_if_missing
+import_parameter_if_missing
