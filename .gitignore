@@ -1,0 +1,7 @@
+# Terraform artifacts
+infra/backend.tf
+infra/.terraform/
+infra/.terraform.lock.hcl
+infra/terraform.tfstate*
+*.tfstate
+*.tfstate.backup
