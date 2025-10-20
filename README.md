@@ -16,7 +16,9 @@ The `Build & Deploy MCP (apply)` workflow automatically rebuilds and applies the
 Terraform stack whenever files that materially affect the MCP service change
 (`src/`, `sql/`, `infra/`, `Dockerfile`, `pyproject.toml`, or the workflow
 itself). Documentation-only edits—such as changes to this README—will not
-trigger a deployment.
+trigger a deployment. When the workflow runs because of a merge to `main` it
+invokes the Terraform wrapper with `--recreate apply`, guaranteeing that the
+previous deployment is destroyed before a fresh stack is created.
 
 For local plans or ad-hoc applies, use the helper script in `infra/terraform.sh`
 so the remote state bucket (with DynamoDB locking) and SSM artefacts stay in
@@ -35,9 +37,9 @@ cd infra
 AWS_REGION=us-east-1 ./terraform.sh destroy -- -auto-approve
 ```
 
-If you need a full re-deploy in one shot, pass `--recreate` (or use the
-`recreate` sub-command) to run a destroy followed by an apply while re-using the
-same remote state configuration:
+For a guaranteed clean redeploy (whether locally or in automation) use the
+`--recreate` flag so the wrapper destroys the existing infrastructure and then
+applies the desired state in one run:
 
 ```bash
 AWS_REGION=us-east-1 ./terraform.sh --recreate apply -- -auto-approve

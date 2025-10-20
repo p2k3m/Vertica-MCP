@@ -121,71 +121,39 @@ jobs:
         with:
           terraform_wrapper: false
 
-      - name: Bootstrap Terraform backend
-        working-directory: infra
-        run: ./backend-bootstrap.sh
-
-      - name: Terraform init
-        working-directory: infra
-        run: terraform init -upgrade
-
-      - name: Import existing resources (if present)
-        working-directory: infra
-        run: bash import-if-exists.sh || true
-
-      - name: Optional destroy (recreate)
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.recreate }}
-        working-directory: infra
-        run: |
-          set -euo pipefail
-          DB_HOST="${{ secrets.MCP_DB_HOST }}"
-          if [ -z "$DB_HOST" ]; then
-            DB_HOST="127.0.0.1"
-          fi
-          DB_PORT="${{ secrets.MCP_DB_PORT }}"
-          if [ -z "$DB_PORT" ]; then
-            DB_PORT=5433
-          fi
-          USE_CLOUDFRONT="${{ github.event_name == 'workflow_dispatch' && inputs.use_cloudfront || 'false' }}"
-          terraform destroy -auto-approve \
-            -var="aws_region=${{ env.AWS_REGION }}" \
-            -var="account_id=${{ env.AWS_ACCOUNT_ID }}" \
-            -var="http_token=${{ secrets.MCP_HTTP_TOKEN }}" \
-            -var="db_host=${DB_HOST}" \
-            -var="db_port=${DB_PORT}" \
-            -var="db_user=${{ secrets.MCP_DB_USER }}" \
-            -var="db_password=${{ secrets.MCP_DB_PASSWORD }}" \
-            -var="db_name=${{ secrets.MCP_DB_NAME }}" \
-            -var="image_tag=${IMAGE_TAG}" \
-            -var="use_cloudfront=${USE_CLOUDFRONT}"
-
       - name: Validate & Plan (detailed exit code)
         id: plan
         working-directory: infra
+        env:
+          DB_HOST: ${{ secrets.MCP_DB_HOST }}
+          DB_PORT: ${{ secrets.MCP_DB_PORT }}
+          DB_USER: ${{ secrets.MCP_DB_USER }}
+          DB_PASSWORD: ${{ secrets.MCP_DB_PASSWORD }}
+          DB_NAME: ${{ secrets.MCP_DB_NAME }}
+          MCP_HTTP_TOKEN: ${{ secrets.MCP_HTTP_TOKEN }}
+          USE_CLOUDFRONT_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.use_cloudfront || 'false' }}
         run: |
-          set -eo pipefail
-          terraform validate
-          DB_HOST="${{ secrets.MCP_DB_HOST }}"
-          if [ -z "$DB_HOST" ]; then
-            DB_HOST="127.0.0.1"
+          set -euo pipefail
+          HOST="${DB_HOST:-127.0.0.1}"
+          PORT="${DB_PORT:-5433}"
+          USE_CLOUDFRONT="$USE_CLOUDFRONT_INPUT"
+          if [ -z "$USE_CLOUDFRONT" ]; then
+            USE_CLOUDFRONT=false
           fi
-          DB_PORT="${{ secrets.MCP_DB_PORT }}"
-          if [ -z "$DB_PORT" ]; then
-            DB_PORT=5433
-          fi
-          USE_CLOUDFRONT="${{ github.event_name == 'workflow_dispatch' && inputs.use_cloudfront || 'false' }}"
+          TF_ARGS=(
+            "-var=aws_region=${AWS_REGION}"
+            "-var=account_id=${AWS_ACCOUNT_ID}"
+            "-var=http_token=${MCP_HTTP_TOKEN}"
+            "-var=db_host=$HOST"
+            "-var=db_port=$PORT"
+            "-var=db_user=${DB_USER}"
+            "-var=db_password=${DB_PASSWORD}"
+            "-var=db_name=${DB_NAME}"
+            "-var=image_tag=${IMAGE_TAG}"
+            "-var=use_cloudfront=$USE_CLOUDFRONT"
+          )
           set +e
-          terraform plan -detailed-exitcode \
-            -var="aws_region=${{ env.AWS_REGION }}" \
-            -var="account_id=${{ env.AWS_ACCOUNT_ID }}" \
-            -var="http_token=${{ secrets.MCP_HTTP_TOKEN }}" \
-            -var="db_host=${DB_HOST}" \
-            -var="db_port=${DB_PORT}" \
-            -var="db_user=${{ secrets.MCP_DB_USER }}" \
-            -var="db_password=${{ secrets.MCP_DB_PASSWORD }}" \
-            -var="db_name=${{ secrets.MCP_DB_NAME }}" \
-            -var="image_tag=${IMAGE_TAG}" \
-            -var="use_cloudfront=${USE_CLOUDFRONT}"
+          ./terraform.sh plan -- -detailed-exitcode "${TF_ARGS[@]}"
           code=$?
           set -e
           echo "plan_exit=$code" >> "$GITHUB_OUTPUT"
@@ -195,27 +163,47 @@ jobs:
 
       - name: Apply
         working-directory: infra
+        env:
+          DB_HOST: ${{ secrets.MCP_DB_HOST }}
+          DB_PORT: ${{ secrets.MCP_DB_PORT }}
+          DB_USER: ${{ secrets.MCP_DB_USER }}
+          DB_PASSWORD: ${{ secrets.MCP_DB_PASSWORD }}
+          DB_NAME: ${{ secrets.MCP_DB_NAME }}
+          MCP_HTTP_TOKEN: ${{ secrets.MCP_HTTP_TOKEN }}
+          USE_CLOUDFRONT_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.use_cloudfront || 'false' }}
+          RECREATE_ON_PUSH: ${{ github.event_name == 'push' }}
+          RECREATE_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.recreate || 'false' }}
         run: |
-          DB_HOST="${{ secrets.MCP_DB_HOST }}"
-          if [ -z "$DB_HOST" ]; then
-            DB_HOST="127.0.0.1"
+          set -euo pipefail
+          HOST="${DB_HOST:-127.0.0.1}"
+          PORT="${DB_PORT:-5433}"
+          USE_CLOUDFRONT="$USE_CLOUDFRONT_INPUT"
+          if [ -z "$USE_CLOUDFRONT" ]; then
+            USE_CLOUDFRONT=false
           fi
-          DB_PORT="${{ secrets.MCP_DB_PORT }}"
-          if [ -z "$DB_PORT" ]; then
-            DB_PORT=5433
+          TF_ARGS=(
+            "-var=aws_region=${AWS_REGION}"
+            "-var=account_id=${AWS_ACCOUNT_ID}"
+            "-var=http_token=${MCP_HTTP_TOKEN}"
+            "-var=db_host=$HOST"
+            "-var=db_port=$PORT"
+            "-var=db_user=${DB_USER}"
+            "-var=db_password=${DB_PASSWORD}"
+            "-var=db_name=${DB_NAME}"
+            "-var=image_tag=${IMAGE_TAG}"
+            "-var=use_cloudfront=$USE_CLOUDFRONT"
+          )
+          RECREATE_FLAG=""
+          if [ "$RECREATE_ON_PUSH" = "true" ]; then
+            RECREATE_FLAG="--recreate"
+          elif [ "$RECREATE_INPUT" = "true" ]; then
+            RECREATE_FLAG="--recreate"
           fi
-          USE_CLOUDFRONT="${{ github.event_name == 'workflow_dispatch' && inputs.use_cloudfront || 'false' }}"
-          terraform apply -auto-approve \
-            -var="aws_region=${{ env.AWS_REGION }}" \
-            -var="account_id=${{ env.AWS_ACCOUNT_ID }}" \
-            -var="http_token=${{ secrets.MCP_HTTP_TOKEN }}" \
-            -var="db_host=${DB_HOST}" \
-            -var="db_port=${DB_PORT}" \
-            -var="db_user=${{ secrets.MCP_DB_USER }}" \
-            -var="db_password=${{ secrets.MCP_DB_PASSWORD }}" \
-            -var="db_name=${{ secrets.MCP_DB_NAME }}" \
-            -var="image_tag=${IMAGE_TAG}" \
-            -var="use_cloudfront=${USE_CLOUDFRONT}"
+          if [ -n "$RECREATE_FLAG" ]; then
+            ./terraform.sh "$RECREATE_FLAG" apply -- "${TF_ARGS[@]}"
+          else
+            ./terraform.sh apply -- "${TF_ARGS[@]}" -auto-approve
+          fi
 
       - name: Capture TF outputs
         id: out

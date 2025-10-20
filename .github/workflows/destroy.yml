@@ -61,18 +61,6 @@ jobs:
         with:
           terraform_wrapper: false
 
-      - name: Bootstrap Terraform backend
-        working-directory: infra
-        run: ./backend-bootstrap.sh
-
-      - name: Terraform init
-        working-directory: infra
-        run: terraform init -upgrade
-
-      - name: Import existing resources (if present)
-        working-directory: infra
-        run: bash import-if-exists.sh || true
-
       - name: Terraform destroy
         working-directory: infra
         env:
@@ -82,26 +70,24 @@ jobs:
           DB_PASSWORD: ${{ secrets.MCP_DB_PASSWORD }}
           DB_NAME: ${{ secrets.MCP_DB_NAME }}
           USE_CLOUDFRONT_INPUT: ${{ inputs.use_cloudfront }}
+          MCP_HTTP_TOKEN: ${{ secrets.MCP_HTTP_TOKEN }}
         run: |
           set -euo pipefail
-          HOST="$DB_HOST"
-          if [ -z "$HOST" ]; then
-            HOST="127.0.0.1"
+          HOST="${DB_HOST:-127.0.0.1}"
+          PORT="${DB_PORT:-5433}"
+          USE_CLOUDFRONT="$USE_CLOUDFRONT_INPUT"
+          if [ -z "$USE_CLOUDFRONT" ]; then
+            USE_CLOUDFRONT=false
           fi
-          PORT="$DB_PORT"
-          if [ -z "$PORT" ]; then
-            PORT=5433
-          fi
-          if [ -z "$USE_CLOUDFRONT_INPUT" ] || [ "$USE_CLOUDFRONT_INPUT" = "" ]; then
-            USE_CLOUDFRONT_INPUT=false
-          fi
-          terraform destroy -auto-approve \
-            -var="aws_region=${{ env.AWS_REGION }}" \
-            -var="account_id=${{ env.AWS_ACCOUNT_ID }}" \
-            -var="http_token=${{ secrets.MCP_HTTP_TOKEN }}" \
-            -var="db_host=$HOST" \
-            -var="db_port=$PORT" \
-            -var="db_user=$DB_USER" \
-            -var="db_password=$DB_PASSWORD" \
-            -var="db_name=$DB_NAME" \
-            -var="use_cloudfront=$USE_CLOUDFRONT_INPUT"
+          TF_ARGS=(
+            "-var=aws_region=${AWS_REGION}"
+            "-var=account_id=${AWS_ACCOUNT_ID}"
+            "-var=http_token=${MCP_HTTP_TOKEN}"
+            "-var=db_host=$HOST"
+            "-var=db_port=$PORT"
+            "-var=db_user=${DB_USER}"
+            "-var=db_password=${DB_PASSWORD}"
+            "-var=db_name=${DB_NAME}"
+            "-var=use_cloudfront=$USE_CLOUDFRONT"
+          )
+          ./terraform.sh destroy -- "${TF_ARGS[@]}" -auto-approve
