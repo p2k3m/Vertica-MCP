@@ -1,4 +1,6 @@
-FROM python:3.12-slim
+# Pin to a specific patch release to avoid intermittent Docker Hub
+# manifest resolution failures that occurred with the floating 3.12-slim tag.
+FROM python:3.12.4-slim
 WORKDIR /app
 COPY pyproject.toml /app/
 RUN pip install --no-cache-dir uv && \
