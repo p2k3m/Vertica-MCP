@@ -136,13 +136,13 @@ data "aws_vpc" "default" {
   default = true
 }
 
-data "aws_subnet_ids" "default" {
+data "aws_subnets" "default" {
   count  = local.requested_subnet_id == "" ? 1 : 0
   vpc_id = data.aws_vpc.default[0].id
 }
 
 locals {
-  mcp_subnet_id = local.requested_subnet_id != "" ? local.requested_subnet_id : data.aws_subnet_ids.default[0].ids[0]
+  mcp_subnet_id = local.requested_subnet_id != "" ? local.requested_subnet_id : data.aws_subnets.default[0].ids[0]
 }
 
 data "aws_subnet" "selected" {
