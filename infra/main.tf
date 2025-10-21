@@ -448,12 +448,13 @@ locals {
     }
   ]
   mcp_network_acl_id_list = length(data.aws_network_acls.selected.ids) > 0 ? join(", ", data.aws_network_acls.selected.ids) : "none"
-  mcp_network_story = trimspace(<<-STORY)
-    Traffic to TCP 8000 hits the MCP security group (${aws_security_group.mcp.id}) before it reaches the subnet.
-    The group explicitly allows HTTP (8000) and Vertica (5433) access from 0.0.0.0/0 and ::/0 so the EC2 host can receive requests.
-    Once inside the subnet, network ACLs ${local.mcp_network_acl_id_list} must also allow the request and the ephemeral return range.
-    The systemd unit maps host port 8000 to the MCP Docker container, so any traffic permitted by the security group and ACL policies flows directly into the application and returns to the caller on the same port mapping.
-STORY
+  mcp_network_story = trimspace(<<-STORY
+      Traffic to TCP 8000 hits the MCP security group (${aws_security_group.mcp.id}) before it reaches the subnet.
+      The group explicitly allows HTTP (8000) and Vertica (5433) access from 0.0.0.0/0 and ::/0 so the EC2 host can receive requests.
+      Once inside the subnet, network ACLs ${local.mcp_network_acl_id_list} must also allow the request and the ephemeral return range.
+      The systemd unit maps host port 8000 to the MCP Docker container, so any traffic permitted by the security group and ACL policies flows directly into the application and returns to the caller on the same port mapping.
+  STORY
+  )
 }
 
 resource "random_id" "ssm_document_suffix" {
