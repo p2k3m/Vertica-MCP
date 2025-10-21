@@ -209,9 +209,6 @@ def _is_socket_address(value: str) -> bool:
     if not candidate:
         return False
 
-    if candidate.lower() == "localhost":
-        return True
-
     with suppress(ValueError):
         ip_address(candidate)
         return True
