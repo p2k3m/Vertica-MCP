@@ -129,3 +129,50 @@ def test_main_respects_cli_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert captured["host"] == "10.0.0.5"
     assert captured["port"] == 9005
+
+
+def test_main_rejects_empty_cli_host(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    captured = _fake_uvicorn(monkeypatch)
+
+    with caplog.at_level("WARNING"):
+        server.main(["--host", "   "])
+
+    assert captured["host"] == "0.0.0.0"
+    assert "Ignoring empty CLI --host override" in caplog.text
+
+
+def test_main_rejects_localhost_cli_override(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    captured = _fake_uvicorn(monkeypatch)
+
+    with caplog.at_level("WARNING"):
+        server.main(["--host", "localhost"])
+
+    assert captured["host"] == "0.0.0.0"
+    assert "Ignoring CLI --host override" in caplog.text
+
+
+def test_main_allows_loopback_override_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = _fake_uvicorn(monkeypatch)
+    monkeypatch.setenv("ALLOW_LOOPBACK_LISTEN", "1")
+
+    server.main(["--host", "127.0.0.1"])
+
+    assert captured["host"] == "127.0.0.1"
+
+
+def test_main_rejects_cli_port_out_of_range(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = _fake_uvicorn(monkeypatch)
+
+    with pytest.raises(SystemExit):
+        server.main(["--port", "70000"])
+
+    assert "app" not in captured
+
+
+def test_main_rejects_cli_port_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = _fake_uvicorn(monkeypatch)
+
+    with pytest.raises(SystemExit):
+        server.main(["--port", "0"])
+
+    assert "app" not in captured
