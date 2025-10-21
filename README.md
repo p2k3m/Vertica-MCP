@@ -61,6 +61,22 @@ adds another layer of resilience with `Restart=always` and a five-second
 `/etc/mcp.env` file before the service starts, and `ExecStartPre` health checks
 ensure all required database settings are present before the container runs.
 
+### EC2 network access checklist
+
+Even when the MCP service is healthy, inbound traffic to an EC2 instance is
+blocked unless the AWS networking layers permit the request. When opening the
+application to the internet:
+
+1. **Security group rules** – Add an inbound rule that allows TCP traffic on
+   the port exposed by the app (for example `3000`, `8000`, or `8080`) from
+   `0.0.0.0/0` (or a more restrictive CIDR that matches your audience).
+2. **Network ACLs** – Ensure the subnet's network ACL allows the same inbound
+   port and the ephemeral port range (1024–65535) for return traffic so clients
+   can receive responses.
+3. **Health verification** – After applying the rules, re-run the service
+   health check endpoint (for example `/healthz`) from an external network to
+   confirm connectivity.
+
 ## Deployment endpoints
 
 This section is automatically managed by the deployment workflow. Do not edit
