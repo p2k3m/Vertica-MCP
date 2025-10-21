@@ -181,6 +181,12 @@ data "aws_network_acls" "selected" {
   }
 }
 
+data "aws_network_acl" "selected" {
+  for_each = toset(data.aws_network_acls.selected.ids)
+
+  id = each.value
+}
+
 resource "aws_security_group" "mcp" {
   name        = "mcp-vertica"
   description = "Security group for the Vertica MCP service"
@@ -431,18 +437,21 @@ locals {
     ]
   }
   mcp_network_acl_summary = [
-    for nacl in data.aws_network_acls.selected.network_acls : {
-      id            = nacl.id
-      subnet_ids    = nacl.subnet_ids
+    for nacl in values(data.aws_network_acl.selected) : {
+      id         = nacl.id
+      subnet_ids = nacl.subnet_ids
       allow_entries = [
-        for entry in nacl.entries : {
-          rule_number = entry.rule_number
-          egress      = entry.egress
-          protocol    = entry.protocol
-          action      = lower(try(entry.rule_action, ""))
-          cidr_block  = try(entry.cidr_block, null)
+        for entry in concat(
+          [for ingress in nacl.ingress : merge(ingress, { egress = false })],
+          [for egress in nacl.egress : merge(egress, { egress = true })]
+        ) : {
+          rule_number     = entry.rule_number
+          egress          = entry.egress
+          protocol        = entry.protocol
+          action          = lower(try(entry.rule_action, ""))
+          cidr_block      = try(entry.cidr_block, null)
           ipv6_cidr_block = try(entry.ipv6_cidr_block, null)
-          port_range  = try(format("%d-%d", entry.port_range.from, entry.port_range.to), "all")
+          port_range = try(format("%d-%d", entry.from_port, entry.to_port), "all")
         } if lower(try(entry.rule_action, "")) == "allow"
       ]
     }
