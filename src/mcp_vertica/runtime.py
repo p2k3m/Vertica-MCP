@@ -17,12 +17,15 @@ __all__ = [
     "is_bindable_listen_host",
     "resolve_listen_host",
     "resolve_listen_port",
+    "resolve_public_http_port",
+    "require_public_port_alignment",
 ]
 
 logger = logging.getLogger("mcp_vertica.runtime")
 
 _BIND_HOST_KEYS = ("LISTEN_HOST", "MCP_LISTEN_HOST", "BIND_HOST", "MCP_BIND_HOST")
 _BIND_PORT_KEYS = ("LISTEN_PORT", "MCP_LISTEN_PORT", "BIND_PORT", "MCP_BIND_PORT", "PORT")
+_PUBLIC_PORT_KEYS = ("PUBLIC_HTTP_PORT", "MCP_PUBLIC_HTTP_PORT")
 
 
 def allow_loopback_listen() -> bool:
@@ -151,6 +154,36 @@ def resolve_listen_port(*, log: logging.Logger | None = None) -> int:
             return port
 
     return 8000
+
+
+def resolve_public_http_port(*, log: logging.Logger | None = None) -> int:
+    """Return the externally exposed HTTP port for the MCP service."""
+
+    log = log or logger
+
+    for key in (*_PUBLIC_PORT_KEYS, *_BIND_PORT_KEYS):
+        port = _coerce_port(os.environ.get(key), key, log=log)
+        if port is not None:
+            return port
+
+    return 8000
+
+
+def require_public_port_alignment(port: int, *, log: logging.Logger | None = None) -> None:
+    """Ensure the public HTTP port matches the MCP listen port."""
+
+    log = log or logger
+    public_port = resolve_public_http_port(log=log)
+
+    if public_port != port:
+        raise SystemExit(
+            "Configured public HTTP port {public} does not match MCP listen port {listen}. "
+            "Update PUBLIC_HTTP_PORT (or related overrides) to reflect the exposed "
+            "container port mapping before starting the service.".format(
+                public=public_port,
+                listen=port,
+            )
+        )
 
 
 def is_bindable_listen_host(value: str, *, allow_loopback: bool | None = None) -> bool:

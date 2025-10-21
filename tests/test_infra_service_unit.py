@@ -47,3 +47,12 @@ def test_service_unit_recovers_from_previous_container_failure() -> None:
 
     assert any("docker rm -f mcp" in line for line in exec_start_pre_lines)
     assert any("docker pull" in line for line in exec_start_pre_lines)
+
+
+def test_service_unit_exposes_public_port() -> None:
+    """The systemd service must map the container HTTP port to the host."""
+
+    unit = _extract_service_unit()
+
+    assert "docker run" in unit
+    assert "-p 8000:8000" in unit

@@ -5,7 +5,7 @@ import types
 
 import pytest
 
-from mcp_vertica import server
+from mcp_vertica import runtime, server
 
 
 def _fake_uvicorn(monkeypatch: pytest.MonkeyPatch):
@@ -80,6 +80,7 @@ def test_run_server_respects_explicit_listen_env(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("LISTEN_HOST", "127.0.0.1")
     monkeypatch.setenv("LISTEN_PORT", "9001")
     monkeypatch.setenv("ALLOW_LOOPBACK_LISTEN", "1")
+    monkeypatch.setenv("PUBLIC_HTTP_PORT", "9001")
 
     server._run_server()
 
@@ -105,6 +106,7 @@ def test_run_server_falls_back_to_port_env(monkeypatch: pytest.MonkeyPatch, capl
     captured = _fake_uvicorn(monkeypatch)
     monkeypatch.setenv("LISTEN_PORT", "not-a-number")
     monkeypatch.setenv("PORT", "9002")
+    monkeypatch.setenv("PUBLIC_HTTP_PORT", "9002")
 
     with caplog.at_level("WARNING"):
         server._run_server()
@@ -124,11 +126,50 @@ def test_main_defaults_to_http(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_main_respects_cli_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     captured = _fake_uvicorn(monkeypatch)
+    monkeypatch.setenv("PUBLIC_HTTP_PORT", "9005")
 
     server.main(["--host", "10.0.0.5", "--port", "9005"])
 
     assert captured["host"] == "10.0.0.5"
     assert captured["port"] == 9005
+
+
+def test_run_server_errors_when_public_port_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = _fake_uvicorn(monkeypatch)
+    monkeypatch.setenv("PUBLIC_HTTP_PORT", "8100")
+
+    with pytest.raises(SystemExit) as exc:
+        server._run_server()
+
+    assert "public HTTP port" in str(exc.value)
+    assert "app" not in captured
+
+
+def test_resolve_public_http_port_prefers_explicit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PUBLIC_HTTP_PORT", "8100")
+    monkeypatch.setenv("LISTEN_PORT", "8200")
+
+    assert runtime.resolve_public_http_port() == 8100
+
+
+def test_resolve_public_http_port_falls_back_to_listen(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PUBLIC_HTTP_PORT", raising=False)
+    monkeypatch.setenv("LISTEN_PORT", "8300")
+
+    assert runtime.resolve_public_http_port() == 8300
+
+
+def test_require_public_port_alignment_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PUBLIC_HTTP_PORT", "8400")
+
+    with pytest.raises(SystemExit):
+        runtime.require_public_port_alignment(8000)
+
+
+def test_require_public_port_alignment_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PUBLIC_HTTP_PORT", "8500")
+
+    runtime.require_public_port_alignment(8500)
 
 
 def test_main_rejects_empty_cli_host(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
