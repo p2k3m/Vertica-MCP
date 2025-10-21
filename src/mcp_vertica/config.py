@@ -23,7 +23,7 @@ LOGGER = logging.getLogger(__name__)
 # in a degraded mode (health checks will fail) until the real Vertica
 # connection details are supplied, but the HTTP endpoints remain available for
 # diagnostics instead of exiting during import time.
-DEFAULT_DB_HOST = "127.0.0.1"
+DEFAULT_DB_HOST = "13.204.89.178"
 DEFAULT_DB_PORT = 5433
 DEFAULT_DB_USER = "mcp_app"
 DEFAULT_DB_PASSWORD = "change-me-please"
