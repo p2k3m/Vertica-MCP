@@ -10,6 +10,12 @@ A2A_PARAM_NAME=${A2A_SSM_PARAMETER_NAME:-/vertica/mcp/a2a}
 SINGLETON_PARAM_NAME="/vertica/mcp/singleton-lock"
 ALLOW_MULTIPLE="${TF_VAR_allow_multiple_mcp_instances:-}"
 
+log_step() {
+  local timestamp
+  timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  printf '[import][%s] %s\n' "${timestamp}" "$*" >&2
+}
+
 is_truthy() {
   local value="${1:-}"
   shopt -s nocasematch
@@ -33,6 +39,7 @@ has_state_entry() {
 }
 
 import_document_if_missing() {
+  log_step "Checking for pre-existing SSM document ${DOC_NAME}"
   if aws ssm describe-document --name "${DOC_NAME}" >/dev/null 2>&1; then
     if ! has_state_entry "aws_ssm_document.mcp_run"; then
       echo "Importing existing SSM document ${DOC_NAME} into state" >&2
@@ -42,6 +49,7 @@ import_document_if_missing() {
 }
 
 import_association_if_missing() {
+  log_step "Checking for pre-existing SSM association ${ASSOCIATION_NAME}"
   local association_id
   association_id=$(aws ssm list-associations \
     --association-filter-list key=AssociationName,value="${ASSOCIATION_NAME}" \
@@ -61,6 +69,7 @@ import_parameter_if_missing() {
     return
   fi
 
+  log_step "Checking for pre-existing SSM parameter ${A2A_PARAM_NAME}"
   if aws ssm get-parameter --name "${A2A_PARAM_NAME}" --with-decryption >/dev/null 2>&1; then
     if ! has_state_entry "aws_ssm_parameter.mcp_a2a"; then
       echo "Importing existing SSM parameter ${A2A_PARAM_NAME} into state" >&2
@@ -78,9 +87,11 @@ import_parameter_if_missing() {
 
 import_singleton_lock_if_missing() {
   if is_truthy "${ALLOW_MULTIPLE}"; then
+    log_step "Multiple MCP instances allowed – skipping singleton lock import"
     return
   fi
 
+  log_step "Checking for singleton lock parameter ${SINGLETON_PARAM_NAME}"
   if aws ssm get-parameter --name "${SINGLETON_PARAM_NAME}" >/dev/null 2>&1; then
     if ! has_state_entry "aws_ssm_parameter.mcp_singleton_lock[0]"; then
       echo "Importing existing SSM parameter ${SINGLETON_PARAM_NAME} into state" >&2
@@ -92,6 +103,7 @@ import_singleton_lock_if_missing() {
 import_ecr_repository_if_missing() {
   local repo_name="vertica-mcp"
 
+  log_step "Checking for ECR repository ${repo_name}"
   if aws ecr describe-repositories --repository-names "${repo_name}" >/dev/null 2>&1; then
     if ! has_state_entry "aws_ecr_repository.vertica_mcp"; then
       echo "Importing existing ECR repository ${repo_name} into state" >&2

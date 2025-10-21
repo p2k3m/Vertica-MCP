@@ -174,6 +174,13 @@ locals {
   mcp_vpc_id = data.aws_subnet.selected.vpc_id
 }
 
+data "aws_network_acls" "selected" {
+  filter {
+    name   = "association.subnet-id"
+    values = [local.mcp_subnet_id]
+  }
+}
+
 resource "aws_security_group" "mcp" {
   name        = "mcp-vertica"
   description = "Security group for the Vertica MCP service"
@@ -393,6 +400,60 @@ locals {
     database = local.db_snippet
   }
   a2a_parameter_name = trimspace(var.a2a_ssm_parameter_name)
+  mcp_docker_port_binding = {
+    host_port      = 8000
+    container_port = 8000
+    protocol       = "tcp"
+    description    = "systemd runs docker with -p 8000:8000 to expose the MCP server"
+  }
+  mcp_security_group_summary = {
+    id   = aws_security_group.mcp.id
+    name = aws_security_group.mcp.name
+    ingress = [
+      for rule in aws_security_group.mcp.ingress : {
+        description      = rule.description
+        from_port        = rule.from_port
+        to_port          = rule.to_port
+        protocol         = rule.protocol
+        cidr_blocks      = rule.cidr_blocks
+        ipv6_cidr_blocks = rule.ipv6_cidr_blocks
+      }
+    ]
+    egress = [
+      for rule in aws_security_group.mcp.egress : {
+        description      = rule.description
+        from_port        = rule.from_port
+        to_port          = rule.to_port
+        protocol         = rule.protocol
+        cidr_blocks      = rule.cidr_blocks
+        ipv6_cidr_blocks = rule.ipv6_cidr_blocks
+      }
+    ]
+  }
+  mcp_network_acl_summary = [
+    for nacl in data.aws_network_acls.selected.network_acls : {
+      id            = nacl.id
+      subnet_ids    = nacl.subnet_ids
+      allow_entries = [
+        for entry in nacl.entries : {
+          rule_number = entry.rule_number
+          egress      = entry.egress
+          protocol    = entry.protocol
+          action      = lower(try(entry.rule_action, ""))
+          cidr_block  = try(entry.cidr_block, null)
+          ipv6_cidr_block = try(entry.ipv6_cidr_block, null)
+          port_range  = try(format("%d-%d", entry.port_range.from, entry.port_range.to), "all")
+        } if lower(try(entry.rule_action, "")) == "allow"
+      ]
+    }
+  ]
+  mcp_network_acl_id_list = length(data.aws_network_acls.selected.ids) > 0 ? join(", ", data.aws_network_acls.selected.ids) : "none"
+  mcp_network_story = trimspace(<<-STORY)
+    Traffic to TCP 8000 hits the MCP security group (${aws_security_group.mcp.id}) before it reaches the subnet.
+    The group explicitly allows HTTP (8000) and Vertica (5433) access from 0.0.0.0/0 and ::/0 so the EC2 host can receive requests.
+    Once inside the subnet, network ACLs ${local.mcp_network_acl_id_list} must also allow the request and the ephemeral return range.
+    The systemd unit maps host port 8000 to the MCP Docker container, so any traffic permitted by the security group and ACL policies flows directly into the application and returns to the caller on the same port mapping.
+  STORY
 }
 
 resource "random_id" "ssm_document_suffix" {
