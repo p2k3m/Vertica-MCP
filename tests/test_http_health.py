@@ -39,6 +39,7 @@ def test_health_endpoint(monkeypatch, client):
     config = payload["diagnostics"]["config"]
     assert config["database"]["host"] == server.settings.host
     assert config["auth"]["http_token_configured"] is bool(server.settings.http_token)
+    assert config["database"]["placeholder_credentials"] is False
 
 
 def test_health_endpoint_reports_failures(monkeypatch, client):
@@ -54,11 +55,30 @@ def test_health_endpoint_reports_failures(monkeypatch, client):
     )
 
     response = client.get("/healthz", params={"ping-vertica": "true"})
-    assert response.status_code == 200
+    assert response.status_code == 503
 
     payload = response.json()
     assert payload["ok"] is False
     assert payload["checks"]["database"]["error"] == "no connection"
+
+
+def test_health_endpoint_reports_placeholder_credentials(monkeypatch):
+    monkeypatch.setattr(
+        server.settings.__class__,
+        "using_placeholder_credentials",
+        lambda self: True,
+    )
+
+    with TestClient(server.app) as placeholder_client:
+        response = placeholder_client.get("/healthz", params={"ping-vertica": "true"})
+
+    assert response.status_code == 503
+
+    payload = response.json()
+    database = payload["checks"]["database"]
+    assert database["ok"] is False
+    assert database["placeholder_credentials"] is True
+    assert "placeholder" in database["error"].lower()
 
 
 def test_status_endpoint_is_lightweight(monkeypatch, client):

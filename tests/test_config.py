@@ -58,7 +58,7 @@ def test_env_helper_prefers_prefixed_values(monkeypatch):
     assert config._env("EXAMPLE", default=None) == "from-direct"
 
 
-def test_required_database_env_uses_defaults(monkeypatch, caplog):
+def test_required_database_env_defaults_flag_placeholders(monkeypatch, caplog):
     _clear_db_env(monkeypatch)
 
     with caplog.at_level("WARNING"):
@@ -69,6 +69,7 @@ def test_required_database_env_uses_defaults(monkeypatch, caplog):
     assert fresh.user == config.DEFAULT_DB_USER
     assert fresh.password == config.DEFAULT_DB_PASSWORD
     assert fresh.database == config.DEFAULT_DB_NAME
+    assert fresh.using_placeholder_credentials() is True
 
     # At least one of the missing variables should have emitted a warning so
     # operators are nudged to provide the correct credentials.
