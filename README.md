@@ -27,6 +27,24 @@ invoking the Terraform wrapper you can also override the connection details via
 environment variables such as `TF_VAR_db_host` or command-line flags like
 `--db-host`.
 
+When targeting remote clusters the MCP now understands a richer set of
+connection controls:
+
+* `DB_BACKUP_NODES` accepts a comma-separated list of `host[:port]` entries so
+  the driver can automatically fail over to a secondary region when the primary
+  host is unavailable.
+* `DB_TLSMODE` toggles Vertica TLS negotiation (`disable`, `allow`, `prefer`,
+  `require`, `verify-ca`, or `verify-full`).
+* `DB_TLS_CAFILE`, `DB_TLS_CERTFILE`, and `DB_TLS_KEYFILE` allow the MCP to load
+  custom certificate authorities or client credentials.
+* `DB_USE_SSL` forces a legacy boolean `ssl` flag when you need to match older
+  Vertica deployments.
+
+Sample `.env` templates that demonstrate these options live under
+`examples/env/`. Copy the file that matches your deployment scenario (public
+TLS, legacy NoSSL, or multi-region) to the project root and replace the
+placeholder values before launching the MCP.
+
 To expose the MCP over HTTP when running locally, start the FastMCP runtime in
 HTTP mode and bind it to a public interface. The packaged defaults mirror the
 production deployment by listening on `0.0.0.0:8000` unless overridden with the

@@ -153,6 +153,51 @@ def _split_csv(value: str | None, fallback: Iterable[str]) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _parse_backup_nodes(raw: str | None) -> list[tuple[str, int]]:
+    """Return backup Vertica hosts parsed from ``DB_BACKUP_NODES``."""
+
+    if not raw:
+        return []
+
+    nodes: list[tuple[str, int]] = []
+    for entry in raw.split(","):
+        candidate = entry.strip()
+        if not candidate:
+            continue
+
+        if ":" in candidate:
+            host_part, port_part = candidate.rsplit(":", 1)
+            host = host_part.strip()
+            port_text = port_part.strip()
+            if not host:
+                raise ValueError(
+                    "DB_BACKUP_NODES entries must include a hostname before the colon"
+                )
+            if not port_text:
+                raise ValueError(
+                    "DB_BACKUP_NODES entries must include a port number after the colon"
+                )
+            try:
+                port = int(port_text)
+            except ValueError as exc:  # pragma: no cover - defensive parsing
+                raise ValueError(
+                    "DB_BACKUP_NODES port values must be integers"
+                ) from exc
+        else:
+            host = candidate
+            port = DEFAULT_DB_PORT
+
+        if not host:
+            raise ValueError("DB_BACKUP_NODES entries must not be empty")
+
+        if not 1 <= port <= 65535:
+            raise ValueError("DB_BACKUP_NODES ports must be between 1 and 65535")
+
+        nodes.append((host, port))
+
+    return nodes
+
+
 class DatabaseOverrides(BaseModel):
     """Runtime database configuration supplied via the API."""
 
@@ -233,6 +278,22 @@ class Settings(BaseModel):
         default_factory=lambda: _env_bool("DB_DEBUG", default=False)
     )
 
+    backup_nodes: list[tuple[str, int]] = Field(
+        default_factory=lambda: _parse_backup_nodes(_env("DB_BACKUP_NODES"))
+    )
+
+    tls_mode: str | None = Field(
+        default_factory=lambda: _env("DB_TLSMODE")
+    )
+    use_ssl: bool | None = Field(
+        default_factory=lambda: _env("DB_USE_SSL")
+    )
+    tls_cafile: str | None = Field(default_factory=lambda: _env("DB_TLS_CAFILE"))
+    tls_certfile: str | None = Field(
+        default_factory=lambda: _env("DB_TLS_CERTFILE")
+    )
+    tls_keyfile: str | None = Field(default_factory=lambda: _env("DB_TLS_KEYFILE"))
+
     def model_post_init(self, __context: Any) -> None:  # pragma: no cover - simple assignment
         self._database_source = "environment"
 
@@ -242,6 +303,101 @@ class Settings(BaseModel):
         if not value:
             raise ValueError("At least one allowed schema must be configured")
         return value
+
+    @field_validator("tls_mode", mode="before")
+    @classmethod
+    def _validate_tls_mode(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+
+        candidate = str(value).strip().lower()
+        if not candidate:
+            return None
+
+        allowed = {
+            "disable",
+            "allow",
+            "prefer",
+            "require",
+            "verify-ca",
+            "verify-full",
+        }
+        if candidate not in allowed:
+            raise ValueError(
+                "DB_TLSMODE must be one of disable, allow, prefer, require, verify-ca, verify-full"
+            )
+        return candidate
+
+    @field_validator("use_ssl", mode="before")
+    @classmethod
+    def _validate_use_ssl(cls, value: Any) -> bool | None:
+        if value is None or isinstance(value, bool):
+            return value
+
+        candidate = str(value).strip().lower()
+        if not candidate:
+            return None
+
+        if candidate in {"1", "true", "yes", "on"}:
+            return True
+        if candidate in {"0", "false", "no", "off"}:
+            return False
+
+        raise ValueError("DB_USE_SSL must be a boolean value")
+
+    @field_validator("tls_cafile", "tls_certfile", "tls_keyfile", mode="before")
+    @classmethod
+    def _validate_optional_path(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+
+        candidate = str(value).strip()
+        if not candidate:
+            return None
+        return candidate
+
+    @field_validator("backup_nodes", mode="before")
+    @classmethod
+    def _validate_backup_nodes(cls, value: Any) -> list[tuple[str, int]]:
+        if value is None:
+            return []
+
+        if isinstance(value, list):
+            normalised: list[tuple[str, int]] = []
+            for item in value:
+                if isinstance(item, tuple) and len(item) == 2:
+                    host, port = item
+                elif isinstance(item, dict):
+                    host = item.get("host")
+                    port = item.get("port")
+                else:
+                    raise ValueError(
+                        "DB_BACKUP_NODES must be a comma-separated list of host[:port] entries"
+                    )
+
+                if host is None or str(host).strip() == "":
+                    raise ValueError(
+                        "DB_BACKUP_NODES entries must include a hostname before the colon"
+                    )
+                try:
+                    port_int = int(port)
+                except (TypeError, ValueError) as exc:  # pragma: no cover - defensive
+                    raise ValueError("DB_BACKUP_NODES port values must be integers") from exc
+
+                if not 1 <= port_int <= 65535:
+                    raise ValueError(
+                        "DB_BACKUP_NODES ports must be between 1 and 65535"
+                    )
+
+                normalised.append((str(host).strip(), port_int))
+            return normalised
+
+        if isinstance(value, str):
+            return _parse_backup_nodes(value)
+
+        raise ValueError(
+            "DB_BACKUP_NODES must be provided as a comma-separated string"
+        )
 
     @property
     def default_schema(self) -> str:
@@ -284,6 +440,41 @@ class Settings(BaseModel):
             object.__setattr__(self, key, value)
 
         self._database_source = refreshed.database_source
+
+    def vertica_connection_options(self) -> dict[str, Any]:
+        """Return keyword arguments for :func:`vertica_python.connect`."""
+
+        options: dict[str, Any] = {
+            "host": self.host,
+            "port": self.port,
+            "user": self.user,
+            "password": self.password,
+            "database": self.database,
+            "connection_timeout": 5,
+            "autocommit": True,
+        }
+
+        if self.backup_nodes:
+            options["backup_server_node"] = [
+                (host, port) for host, port in self.backup_nodes
+            ]
+
+        if self.tls_mode:
+            options["tlsmode"] = self.tls_mode
+
+        if self.tls_cafile:
+            options["tls_cafile"] = self.tls_cafile
+
+        if self.tls_certfile:
+            options["tls_certfile"] = self.tls_certfile
+
+        if self.tls_keyfile:
+            options["tls_keyfile"] = self.tls_keyfile
+
+        if self.use_ssl is not None:
+            options["ssl"] = self.use_ssl
+
+        return options
 
 
 try:
