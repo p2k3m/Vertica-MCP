@@ -15,6 +15,16 @@ your own secrets before deploying anywhere outside of local testing. Startup
 fails fast with a clear error message if the file is missing so deployments
 never fall back to placeholder credentials.
 
+### Pointing the MCP at your Vertica database
+
+The `.env` file and Terraform variables both default to the loopback address so
+the service never reaches out to an unexpected database host. Before deploying
+to AWS, update `DB_HOST` (and, if necessary, the related `DB_*` settings) to
+match the publicly reachable Vertica instance you want the MCP to use. When
+invoking the Terraform wrapper you can also override the connection details via
+environment variables such as `TF_VAR_db_host` or command-line flags like
+`--db-host`.
+
 To expose the MCP over HTTP when running locally, start the FastMCP runtime in
 HTTP mode and bind it to a public interface. The packaged defaults mirror the
 production deployment by listening on `0.0.0.0:8000` unless overridden with the
@@ -153,6 +163,16 @@ scripts, follow this workflow so EC2-hosted or LAN clients can connect:
 3. **Validate connectivity** – After updating the firewall, rerun the MCP
    server or bounce the host networking stack, then hit `/healthz` from an
    external network to confirm the port is reachable.
+
+### Claude Desktop integration
+
+Each `terraform.sh apply` run writes `build/mcp-a2a.json` and
+`build/claude-desktop-config.json`. The latter is ready to drop into Claude
+Desktop's `claude_desktop_config.json` file: merge the `mcpServers` block with
+your existing configuration (or copy it wholesale on a fresh install) so the
+desktop client can reach the public MCP endpoint immediately. The generated
+config prefers the HTTPS CloudFront address when available and includes the
+correct authorization header when an HTTP bearer token is configured.
 
 ## Deployment endpoints
 
