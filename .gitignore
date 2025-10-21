@@ -5,3 +5,8 @@ infra/.terraform.lock.hcl
 infra/terraform.tfstate*
 *.tfstate
 *.tfstate.backup
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/

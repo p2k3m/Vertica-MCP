@@ -173,10 +173,34 @@ def _query_execution(query: str) -> Dict[str, Any]:
 
 
 def _resolve_listen_host() -> str:
+    allow_loopback = os.environ.get("ALLOW_LOOPBACK_LISTEN", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
     for key in ("LISTEN_HOST", "MCP_LISTEN_HOST", "BIND_HOST", "MCP_BIND_HOST"):
         value = os.environ.get(key)
-        if value and value.strip():
-            return value.strip()
+        if not value:
+            continue
+
+        candidate = value.strip()
+        if not candidate:
+            continue
+
+        if _is_bindable_host(candidate, allow_loopback=allow_loopback):
+            return candidate
+
+        logger.warning(
+            "Ignoring %s environment variable value %r; not a bindable interface.",
+            key,
+            value,
+        )
+        if candidate in {"127.0.0.1", "localhost"} and not allow_loopback:
+            logger.warning(
+                "Set ALLOW_LOOPBACK_LISTEN=1 to bind Vertica MCP to loopback interfaces explicitly."
+            )
 
     legacy_host = os.environ.get("HOST")
     if legacy_host and legacy_host.strip():
@@ -201,7 +225,7 @@ def _resolve_listen_port() -> int:
     return 8000
 
 
-def _is_bindable_host(value: str) -> bool:
+def _is_bindable_host(value: str, *, allow_loopback: bool = False) -> bool:
     if not value:
         return False
 
@@ -213,12 +237,10 @@ def _is_bindable_host(value: str) -> bool:
         ip = ip_address(candidate)
         if ip.is_unspecified:
             return True
-        if ip.is_private and not ip.is_loopback:
+        if ip.is_loopback:
+            return allow_loopback
+        if ip.is_private:
             return True
-        logger.warning(
-            "HOST environment variable value %r is not a local interface; ignoring.",
-            value,
-        )
         return False
 
     return False
