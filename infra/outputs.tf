@@ -60,3 +60,12 @@ output "mcp_a2a_metadata" {
   value     = local.a2a_payload
   sensitive = true
 }
+
+output "mcp_network_summary" {
+  value = {
+    docker_binding = local.mcp_docker_port_binding
+    security_group = local.mcp_security_group_summary
+    network_acls   = local.mcp_network_acl_summary
+    narrative      = local.mcp_network_story
+  }
+}

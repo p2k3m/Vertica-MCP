@@ -62,6 +62,12 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd)
 cd "${SCRIPT_DIR}"
 
+log_step() {
+  local timestamp
+  timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  printf '[terraform][%s] %s\n' "${timestamp}" "$*" >&2
+}
+
 A2A_ARTIFACT_PATH=${A2A_ARTIFACT_PATH:-"${REPO_ROOT}/build/mcp-a2a.json"}
 CLAUDE_CONFIG_PATH=${CLAUDE_CONFIG_PATH:-"${REPO_ROOT}/build/claude-desktop-config.json"}
 
@@ -209,8 +215,12 @@ RESOLVED_REGION=$(resolve_value "${DEFAULT_AWS_REGION}" "${TF_VAR_aws_region:-}"
 export AWS_REGION="${RESOLVED_REGION}"
 export TF_VAR_aws_region="${RESOLVED_REGION}"
 
+log_step "Command: ${COMMAND}"
+log_step "AWS region resolved to ${RESOLVED_REGION}"
+
 RESOLVED_INSTANCE_TYPE=$(resolve_value "${DEFAULT_INSTANCE_TYPE}" "${TF_VAR_mcp_instance_type:-}" "${MCP_INSTANCE_TYPE:-}" "${CLI_INSTANCE_TYPE}")
 export TF_VAR_mcp_instance_type="${RESOLVED_INSTANCE_TYPE}"
+log_step "EC2 instance type resolved to ${RESOLVED_INSTANCE_TYPE}"
 
 RESOLVED_SUBNET_ID=$(resolve_value "${DEFAULT_SUBNET_ID}" "${TF_VAR_mcp_subnet_id:-}" "${MCP_SUBNET_ID:-}" "${CLI_SUBNET_ID}")
 if [[ -z "${RESOLVED_SUBNET_ID}" ]]; then
@@ -218,12 +228,18 @@ if [[ -z "${RESOLVED_SUBNET_ID}" ]]; then
 else
   export TF_VAR_mcp_subnet_id="${RESOLVED_SUBNET_ID}"
 fi
+if [[ -n "${RESOLVED_SUBNET_ID}" ]]; then
+  log_step "Deploying into subnet ${RESOLVED_SUBNET_ID}"
+else
+  log_step "No explicit subnet provided – using default VPC subnet"
+fi
 
 RESOLVED_DB_HOST=$(resolve_value "${DEFAULT_DB_HOST}" "${TF_VAR_db_host:-}" "${MCP_DB_HOST:-}" "${CLI_DB_HOST}")
 export TF_VAR_db_host="${RESOLVED_DB_HOST}"
 
 RESOLVED_DB_PORT=$(resolve_value "${DEFAULT_DB_PORT}" "${TF_VAR_db_port:-}" "${MCP_DB_PORT:-}" "${CLI_DB_PORT}")
 export TF_VAR_db_port="${RESOLVED_DB_PORT}"
+log_step "Database target resolved to ${RESOLVED_DB_HOST}:${RESOLVED_DB_PORT}"
 
 RESOLVED_DB_USER=$(resolve_value "${DEFAULT_DB_USER}" "${TF_VAR_db_user:-}" "${MCP_DB_USER:-}" "${CLI_DB_USER}")
 export TF_VAR_db_user="${RESOLVED_DB_USER}"
@@ -239,6 +255,11 @@ if [[ -z "${RESOLVED_ALLOW_MULTIPLE}" ]]; then
   unset TF_VAR_allow_multiple_mcp_instances
 else
   export TF_VAR_allow_multiple_mcp_instances="${RESOLVED_ALLOW_MULTIPLE}"
+fi
+if [[ "${RESOLVED_ALLOW_MULTIPLE}" == "true" ]]; then
+  log_step "Singleton guard disabled – allowing multiple MCP instances"
+else
+  log_step "Singleton guard enabled"
 fi
 
 EXTRA_ARGS=()
@@ -261,20 +282,22 @@ if [[ -z "${AWS_REGION:-}" ]]; then
 fi
 
 bootstrap_backend() {
-  echo "Running backend bootstrapper..." >&2
+  log_step "Ensuring remote backend prerequisites"
   "${SCRIPT_DIR}/backend-bootstrap.sh"
 }
 
 terraform_init() {
-  echo "Initializing Terraform working directory..." >&2
+  log_step "Initializing Terraform working directory"
   terraform init -input=false
 }
 
 import_existing_resources() {
+  log_step "Reconciling existing AWS artefacts into Terraform state"
   "${SCRIPT_DIR}/import-if-exists.sh"
 }
 
 ensure_ready() {
+  log_step "Preparing Terraform environment"
   ensure_no_local_state
   bootstrap_backend
   terraform_init
@@ -283,6 +306,7 @@ ensure_ready() {
 }
 
 ensure_no_local_state() {
+  log_step "Checking for disallowed local Terraform state files"
   local disallowed_state_files=(
     "${SCRIPT_DIR}/terraform.tfstate"
     "${SCRIPT_DIR}/terraform.tfstate.backup"
@@ -298,6 +322,7 @@ ensure_no_local_state() {
 }
 
 verify_remote_backend() {
+  log_step "Verifying remote backend metadata"
   local backend_state_file="${SCRIPT_DIR}/.terraform/terraform.tfstate"
 
   if [[ ! -f "${backend_state_file}" ]]; then
@@ -353,6 +378,7 @@ write_a2a_artifact() {
     return
   fi
 
+  log_step "Exporting MCP automation artefacts"
   python - "${tmp_file}" "${A2A_ARTIFACT_PATH}" "${CLAUDE_CONFIG_PATH}" "${SCRIPT_DIR}" <<'PY'
 import json
 import pathlib
@@ -406,6 +432,7 @@ update_readme_from_outputs() {
     return
   fi
 
+  log_step "Refreshing README endpoints from Terraform outputs"
   if ! python3 "${SCRIPT_DIR}/update_readme.py" --readme "${REPO_ROOT}/README.md" --outputs-json "${tmp_file}"; then
     echo "Warning: failed to update README endpoints from Terraform outputs." >&2
   fi
@@ -414,6 +441,7 @@ update_readme_from_outputs() {
 }
 
 reset_readme_endpoints() {
+  log_step "Resetting README endpoints"
   if ! python3 "${SCRIPT_DIR}/update_readme.py" --readme "${REPO_ROOT}/README.md"; then
     echo "Warning: failed to reset README endpoints." >&2
   fi
@@ -442,19 +470,25 @@ export_tf_vars_from_extra_args() {
         env_name="TF_VAR_${name}"
         export "${env_name}=${value}"
         EXPORTED_TF_VARS+=("${env_name}")
+        log_step "Propagated ${env_name} from CLI override"
         ;;
     esac
   done
 }
 
 cleanup_exported_tf_vars() {
+  local count=${#EXPORTED_TF_VARS[@]}
   for env_name in "${EXPORTED_TF_VARS[@]}"; do
     unset "${env_name}"
   done
   EXPORTED_TF_VARS=()
+  if [[ ${count} -gt 0 ]]; then
+    log_step "Cleared ${count} temporary TF_VAR exports"
+  fi
 }
 
 cleanup_orphaned_resources() {
+  log_step "Running orphaned resource cleanup"
   if ! "${SCRIPT_DIR}/cleanup-orphans.sh"; then
     echo "Warning: failed to clean up orphaned resources." >&2
   fi
@@ -465,14 +499,17 @@ run_command() {
     plan)
       export_tf_vars_from_extra_args
       ensure_ready
+      log_step "Validating Terraform configuration"
       terraform validate
       cleanup_exported_tf_vars
+      log_step "Running terraform plan"
       terraform plan "${EXTRA_ARGS[@]}"
       ;;
     apply)
       export_tf_vars_from_extra_args
       ensure_ready
       if [[ "${RECREATE_FLAG}" == "true" ]]; then
+        log_step "Recreate flag enabled – destroying existing infrastructure first"
         destroy_exit=0
         if ! terraform destroy -auto-approve "${EXTRA_ARGS[@]}"; then
           destroy_exit=$?
@@ -482,8 +519,10 @@ run_command() {
           cleanup_exported_tf_vars
           exit "${destroy_exit}"
         fi
+        log_step "Recreate destroy completed – applying fresh infrastructure"
         terraform apply -auto-approve "${EXTRA_ARGS[@]}"
       else
+        log_step "Running terraform apply"
         terraform apply "${EXTRA_ARGS[@]}"
       fi
       cleanup_exported_tf_vars
@@ -493,6 +532,7 @@ run_command() {
     destroy)
       export_tf_vars_from_extra_args
       ensure_ready
+      log_step "Running terraform destroy"
       destroy_exit=0
       if ! terraform destroy "${EXTRA_ARGS[@]}"; then
         destroy_exit=$?
