@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -10,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .config import settings
 from .sqlman import Provenance, ensure_schema_allowed, ranked_multi, run_sql
+from .runtime import resolve_listen_host, resolve_listen_port
 
 
 def _schema_default() -> str:
@@ -41,7 +43,14 @@ class Limited(SchemaBound):
     limit: int = Field(default=25, ge=1, le=settings.max_rows)
 
 
-mcp = FastMCP("vertica")
+logger = logging.getLogger("mcp_vertica.tools")
+
+mcp = FastMCP(
+    "vertica",
+    host=resolve_listen_host(log=logger),
+    port=resolve_listen_port(log=logger),
+    streamable_http_path="/api",
+)
 
 
 class RepeatIssueParams(Limited):

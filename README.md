@@ -9,6 +9,15 @@ run the automated test suite before opening a pull request:
 pytest
 ```
 
+To expose the MCP over HTTP when running locally, start the FastMCP runtime in
+HTTP mode and bind it to a public interface. The packaged defaults mirror the
+production deployment by listening on `0.0.0.0:8000` unless overridden with the
+`LISTEN_HOST`/`LISTEN_PORT` environment variables:
+
+```bash
+uvx mcp server --transport streamable-http mcp_vertica.tools:mcp
+```
+
 ## Deployment & destruction
 
 Infrastructure changes are applied via the workflows in `.github/workflows/`.
