@@ -13,7 +13,9 @@ The service now requires a `.env` file at the project root. The repository ships
 with a development-safe default that matches the Terraform configuration; add
 your own secrets before deploying anywhere outside of local testing. Startup
 fails fast with a clear error message if the file is missing so deployments
-never fall back to placeholder credentials.
+never fall back to placeholder credentials. Docker and the provisioned systemd
+unit both mount the same `.env` file into `/app/.env`, so a missing file will
+abort container startup with guidance on how to fix the issue.
 
 ### Pointing the MCP at your Vertica database
 
