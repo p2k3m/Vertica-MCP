@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import argparse
 import logging
 import os
 import platform
+import sys
 import time
 from contextlib import suppress
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable
+from typing import Any, Dict, Iterable, Sequence
 
 from fastapi import FastAPI, Query, Request, HTTPException
 from pydantic import BaseModel, Field
@@ -172,25 +174,63 @@ def _query_execution(query: str) -> Dict[str, Any]:
                 cursor.close()
 
 
-def _run_server() -> None:
+def _run_server(*, host: str | None = None, port: int | None = None) -> None:
     """Run the MCP API using uvicorn."""
 
     import uvicorn  # Imported lazily so unit tests without uvicorn still pass
 
-    host = resolve_listen_host(log=logger)
-    port = resolve_listen_port(log=logger)
+    resolved_host = host or resolve_listen_host(log=logger)
+    resolved_port = port or resolve_listen_port(log=logger)
 
-    uvicorn.run("mcp_vertica.server:app", host=host, port=port, log_level="info")
+    uvicorn.run(
+        "mcp_vertica.server:app",
+        host=resolved_host,
+        port=resolved_port,
+        log_level="info",
+    )
 
 
-def main() -> None:
+def _parse_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the Vertica MCP HTTP server")
+    parser.add_argument(
+        "--host",
+        help=(
+            "Bind address for the HTTP transport. Defaults to environment driven "
+            "resolution (0.0.0.0 when unset)."
+        ),
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        help=(
+            "Port for the HTTP transport. Defaults to environment driven "
+            "resolution (8000 when unset)."
+        ),
+    )
+    parser.add_argument(
+        "--transport",
+        choices=["http"],
+        default="http",
+        help="Transport protocol to expose. Only HTTP is currently supported.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> None:
     """CLI entrypoint for running the FastAPI server."""
 
-    _run_server()
+    args = _parse_cli_args(argv)
+
+    if args.transport != "http":  # pragma: no cover - defensive future proofing
+        raise SystemExit(
+            f"Unsupported transport {args.transport!r}; only 'http' is available."
+        )
+
+    _run_server(host=args.host, port=args.port)
 
 
 if __name__ == "__main__":  # pragma: no cover - runtime behaviour
-    main()
+    main(sys.argv[1:])
 
 
 class QueryRequest(BaseModel):
