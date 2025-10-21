@@ -77,15 +77,7 @@ def _classify_connection_exception(exc: Exception) -> Exception:
 
 
 def _new_conn():
-    return vertica_python.connect(
-        host=settings.host,
-        port=settings.port,
-        user=settings.user,
-        password=settings.password,
-        database=settings.database,
-        connection_timeout=5,
-        autocommit=True,
-    )
+    return vertica_python.connect(**settings.vertica_connection_options())
 
 
 def _connect_with_retry():
