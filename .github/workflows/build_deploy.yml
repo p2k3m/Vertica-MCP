@@ -228,6 +228,7 @@ jobs:
         working-directory: infra
         run: |
           set -euo pipefail
+          echo "mcp_instance_id=$(terraform output -raw mcp_instance_id)" >> "$GITHUB_OUTPUT"
           echo "mcp_public_ip=$(terraform output -raw mcp_public_ip)" >> "$GITHUB_OUTPUT"
           if terraform output -raw mcp_public_dns >/tmp/mcp_public_dns 2>/dev/null; then
             echo "mcp_public_dns=$(cat /tmp/mcp_public_dns)" >> "$GITHUB_OUTPUT"
@@ -257,6 +258,23 @@ jobs:
           else
             echo "mcp_https_sse=" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Validate MCP networking
+        env:
+          INSTANCE_ID: ${{ steps.out.outputs.mcp_instance_id }}
+          APP_PORT: 8000
+        run: |
+          set -euo pipefail
+          if [ -z "${INSTANCE_ID:-}" ]; then
+            echo "Instance ID output is empty. Ensure terraform output exposes mcp_instance_id." >&2
+            exit 1
+          fi
+          python3 infra/validate_network.py \
+            --instance-id "$INSTANCE_ID" \
+            --port "$APP_PORT" \
+            --return-port-start 1024 \
+            --return-port-end 65535 \
+            --cidr 0.0.0.0/0
 
       - name: Publish MCP outputs (summary + artifact + SSM Param)
         env:
