@@ -63,6 +63,7 @@ REPO_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd)
 cd "${SCRIPT_DIR}"
 
 A2A_ARTIFACT_PATH=${A2A_ARTIFACT_PATH:-"${REPO_ROOT}/build/mcp-a2a.json"}
+CLAUDE_CONFIG_PATH=${CLAUDE_CONFIG_PATH:-"${REPO_ROOT}/build/claude-desktop-config.json"}
 
 if [[ $# -eq 0 ]]; then
   usage
@@ -352,13 +353,16 @@ write_a2a_artifact() {
     return
   fi
 
-  python - "${tmp_file}" "${A2A_ARTIFACT_PATH}" <<'PY'
+  python - "${tmp_file}" "${A2A_ARTIFACT_PATH}" "${CLAUDE_CONFIG_PATH}" "${SCRIPT_DIR}" <<'PY'
 import json
 import pathlib
 import sys
 
 outputs_path = pathlib.Path(sys.argv[1])
 artifact_path = pathlib.Path(sys.argv[2])
+claude_path = pathlib.Path(sys.argv[3])
+script_dir = pathlib.Path(sys.argv[4])
+sys.path.insert(0, str(script_dir))
 
 try:
     outputs = json.loads(outputs_path.read_text())
@@ -376,6 +380,18 @@ if value in (None, ""):
 artifact_path.parent.mkdir(parents=True, exist_ok=True)
 artifact_path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 print(f"Wrote MCP A2A artifact to {artifact_path}", file=sys.stderr)
+
+try:
+    from claude_config import ClaudeConfigError, write_claude_config
+except Exception:  # pragma: no cover - defensive guard for missing helper
+    sys.exit(0)
+
+try:
+    write_claude_config(value, claude_path)
+except ClaudeConfigError as exc:
+    print(f"Skipping Claude Desktop config generation: {exc}", file=sys.stderr)
+else:
+    print(f"Wrote Claude Desktop config to {claude_path}", file=sys.stderr)
 PY
 
   rm -f "${tmp_file}"

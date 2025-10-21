@@ -32,7 +32,11 @@ ensure_dotenv()
 # in a degraded mode (health checks will fail) until the real Vertica
 # connection details are supplied, but the HTTP endpoints remain available for
 # diagnostics instead of exiting during import time.
-DEFAULT_DB_HOST = "13.204.89.178"
+# Use the loopback address as the baked-in default so operators must provide a
+# real Vertica endpoint via environment variables or Terraform before the
+# service attempts any remote connections. This keeps accidental deployments
+# from pointing at someone else's database when configuration is incomplete.
+DEFAULT_DB_HOST = "127.0.0.1"
 DEFAULT_DB_PORT = 5433
 DEFAULT_DB_USER = "mcp_app"
 DEFAULT_DB_PASSWORD = "change-me-please"
