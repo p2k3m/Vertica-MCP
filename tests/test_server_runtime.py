@@ -111,3 +111,21 @@ def test_run_server_falls_back_to_port_env(monkeypatch: pytest.MonkeyPatch, capl
 
     assert captured["port"] == 9002
     assert "non-integer LISTEN_PORT value" in caplog.text
+
+
+def test_main_defaults_to_http(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = _fake_uvicorn(monkeypatch)
+
+    server.main([])
+
+    assert captured["host"] == "0.0.0.0"
+    assert captured["port"] == 8000
+
+
+def test_main_respects_cli_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = _fake_uvicorn(monkeypatch)
+
+    server.main(["--host", "10.0.0.5", "--port", "9005"])
+
+    assert captured["host"] == "10.0.0.5"
+    assert captured["port"] == 9005
