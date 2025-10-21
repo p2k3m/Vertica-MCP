@@ -100,6 +100,41 @@ sure the MCP process is reachable from your host when testing locally:
   dependencies are installed (`pip install -e .[dev]`, Node, etc.). Bind the
   server to `0.0.0.0` or `127.0.0.1` to match how you plan to access it.
 
+#### Manual HTTP transport startup checklist
+
+When you need to manually start the packaged MCP runtime outside the helper
+scripts, follow this workflow so EC2-hosted or LAN clients can connect:
+
+1. **Start the local HTTP server** – Bind explicitly to all interfaces so the
+   service is reachable over a public IP:
+
+   ```bash
+   vertica-mcp --transport http --port 8000 --bind-host 0.0.0.0
+   ```
+
+   If you rely on the npm distribution, install and run it with:
+
+   ```bash
+   npm install -g @hechtcarmel/vertica-mcp
+   vertica-mcp --transport http --port 8000 --bind-host 0.0.0.0 --env-file .env
+   ```
+
+   For the Python/uv build in this repository:
+
+   ```bash
+   uv sync
+   source .venv/bin/activate
+   vertica-mcp --transport http --port 8000 --bind-host 0.0.0.0
+   ```
+
+2. **Permit inbound traffic** – Add an AWS security group rule (or the
+   equivalent firewall entry) that allows TCP traffic on port `8000` from the
+   desired CIDR, for example `0.0.0.0/0` when testing from the open internet.
+
+3. **Validate connectivity** – After updating the firewall, rerun the MCP
+   server or bounce the host networking stack, then hit `/healthz` from an
+   external network to confirm the port is reachable.
+
 ## Deployment endpoints
 
 This section is automatically managed by the deployment workflow. Do not edit
