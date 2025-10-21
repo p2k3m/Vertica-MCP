@@ -38,5 +38,11 @@ def client(monkeypatch: pytest.MonkeyPatch) -> Generator[TestClient, None, None]
         },
     )
 
+    monkeypatch.setattr(
+        server,
+        "external_ip_info",
+        lambda timeout=2.0: {"ok": True, "ip": "203.0.113.10", "source": "test"},
+    )
+
     with TestClient(server.app) as test_client:
         yield test_client

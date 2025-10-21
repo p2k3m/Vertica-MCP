@@ -36,6 +36,9 @@ def test_health_endpoint(monkeypatch, client):
     assert payload["ok"] is True
     assert "timestamp" in payload
     assert payload["checks"]["database"]["ok"] is True
+    runtime_status = payload["status"]["runtime"]
+    assert runtime_status["listen"]["host"]
+    assert runtime_status["external_ip"]["ip"] == "203.0.113.10"
     config = payload["diagnostics"]["config"]
     assert config["database"]["host"] == server.settings.host
     assert config["auth"]["http_token_configured"] is bool(server.settings.http_token)
@@ -60,6 +63,7 @@ def test_health_endpoint_reports_failures(monkeypatch, client):
     payload = response.json()
     assert payload["ok"] is False
     assert payload["checks"]["database"]["error"] == "no connection"
+    assert "runtime" in payload["status"]
 
 
 def test_health_endpoint_reports_placeholder_credentials(monkeypatch):
@@ -67,6 +71,11 @@ def test_health_endpoint_reports_placeholder_credentials(monkeypatch):
         server.settings.__class__,
         "using_placeholder_credentials",
         lambda self: True,
+    )
+    monkeypatch.setattr(
+        server,
+        "external_ip_info",
+        lambda timeout=2.0: {"ok": True, "ip": "203.0.113.10", "source": "test"},
     )
 
     with TestClient(server.app) as placeholder_client:
@@ -95,6 +104,7 @@ def test_status_endpoint_is_lightweight(monkeypatch, client):
     payload = response.json()
     assert payload["ok"] is True
     assert payload["checks"]["database"]["skipped"] is True
+    assert "runtime" in payload["status"]
 
 
 def test_database_check_success(monkeypatch):
@@ -224,6 +234,11 @@ def test_startup_allows_vertica_failures(monkeypatch):
         }
 
     monkeypatch.setattr(server, "_database_check", failing_database_check)
+    monkeypatch.setattr(
+        server,
+        "external_ip_info",
+        lambda timeout=2.0: {"ok": False, "errors": []},
+    )
 
     with TestClient(server.app) as degraded_client:
         # Startup should have attempted the connectivity probe once.
