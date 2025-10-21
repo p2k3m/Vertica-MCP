@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import errno
+import socket
 from queue import Queue
 
 import pytest
@@ -63,6 +65,46 @@ def test_get_conn_raises_after_retry_exhaustion(monkeypatch, caplog):
             pass
 
     assert attempts_logged(caplog)
+
+
+@pytest.mark.parametrize(
+    "raised, expected_message",
+    [
+        (
+            socket.gaierror(socket.EAI_NONAME, "Name or service not known"),
+            "Unable to resolve Vertica host",
+        ),
+        (
+            OSError(errno.ENETUNREACH, "Network is unreachable"),
+            "Network unreachable",
+        ),
+        (
+            ConnectionRefusedError(errno.ECONNREFUSED, "Connection refused"),
+            "was refused",
+        ),
+        (
+            pool.vertica_python.errors.ConnectionError(
+                "FATAL 28000: Authentication failed"
+            ),
+            "Authentication failed",
+        ),
+    ],
+)
+def test_classified_connection_errors(monkeypatch, raised, expected_message):
+    _reset_pool(monkeypatch)
+    monkeypatch.setattr(pool.settings, "connection_attempts", 1)
+    monkeypatch.setattr(pool.settings, "db_debug_logging", False)
+
+    def failing_connect(**_kwargs):
+        raise raised
+
+    monkeypatch.setattr(pool.vertica_python, "connect", failing_connect)
+
+    with pytest.raises(pool.VerticaConnectionSetupError) as excinfo:
+        with pool.get_conn():
+            pass
+
+    assert expected_message in str(excinfo.value)
 
 
 def attempts_logged(caplog) -> bool:
