@@ -13,8 +13,17 @@ from typing import Iterable
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from .env import ensure_dotenv
+
 
 LOGGER = logging.getLogger(__name__)
+
+
+# Load the shared .env file before reading configuration so we never fall back
+# to placeholder defaults when the project-wide environment definition is
+# missing.  ``ensure_dotenv`` will abort early with a clear error message if the
+# file cannot be located or parsed.
+ensure_dotenv()
 
 
 # Defaults mirror the Terraform variables defined in ``infra/variables.tf`` so a

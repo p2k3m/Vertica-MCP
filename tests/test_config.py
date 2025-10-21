@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import importlib
+
+import pytest
+
 from mcp_vertica import config
+import mcp_vertica.env as env_module
 
 
 def _minimal_required_env(monkeypatch):
@@ -79,3 +84,19 @@ def test_invalid_port_falls_back_to_default(monkeypatch, caplog):
 
     assert fresh.port == config.DEFAULT_DB_PORT
     assert any("invalid integer value" in message for message in caplog.messages)
+
+
+def test_config_import_requires_dotenv(monkeypatch):
+    original = env_module.ensure_dotenv
+
+    def missing_dotenv():
+        raise FileNotFoundError("missing .env")
+
+    monkeypatch.setattr(env_module, "ensure_dotenv", missing_dotenv)
+
+    with pytest.raises(FileNotFoundError):
+        importlib.reload(config)
+
+    # Restore the original loader so later tests re-import configuration safely.
+    monkeypatch.setattr(env_module, "ensure_dotenv", original)
+    importlib.reload(config)
