@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import platform
@@ -8,6 +9,7 @@ import sys
 import time
 from contextlib import suppress
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, Iterable, Sequence
 
 from fastapi import FastAPI, Query, Request, HTTPException
@@ -285,6 +287,13 @@ def _parse_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default="http",
         help="Transport protocol to expose. Only HTTP is currently supported.",
     )
+    parser.add_argument(
+        "--database-payload",
+        help=(
+            "Apply a runtime Vertica configuration before startup. Provide a JSON "
+            "object or prefix a file path with @ (for example @payload.json or @- for stdin)."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -297,6 +306,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         raise SystemExit(
             f"Unsupported transport {args.transport!r}; only 'http' is available."
         )
+
+    if args.database_payload:
+        data = _load_database_override_source(args.database_payload)
+        overrides = DatabaseOverrides.model_validate(data)
+        _apply_database_override(overrides)
 
     _run_server(host=args.host, port=args.port)
 
@@ -313,16 +327,25 @@ class DatabaseConfigRequest(DatabaseOverrides):
     """Pydantic model for runtime database configuration updates."""
 
 
-@app.post("/configure/database")
-async def configure_database(payload: DatabaseConfigRequest):
-    """Apply runtime database settings provided by the MCP client."""
+def _database_state() -> Dict[str, Any]:
+    return {
+        "host": settings.host,
+        "port": settings.port,
+        "database": settings.database,
+        "user": settings.user,
+        "placeholder_credentials": settings.using_placeholder_credentials(),
+        "source": settings.database_source,
+    }
 
-    logger.info("Applying runtime Vertica database configuration via API override")
-    settings.apply_database_overrides(payload)
+
+def _apply_database_override(overrides: DatabaseOverrides) -> Dict[str, Any]:
+    """Apply a validated database override and reset the pool when available."""
+
+    logger.info("Applying runtime Vertica database configuration override")
+    settings.apply_database_overrides(overrides)
     try:
         pool_module.reset_pool()
-    except AttributeError:
-        # Older pool modules may not have reset support; create it lazily.
+    except AttributeError:  # pragma: no cover - defensive for older pool modules
         logger.debug("Pool module missing reset_pool(); no existing connections cleared")
     else:
         logger.info(
@@ -330,17 +353,48 @@ async def configure_database(payload: DatabaseConfigRequest):
             settings.pool_size,
         )
 
-    return {
-        "ok": True,
-        "database": {
-            "host": settings.host,
-            "port": settings.port,
-            "database": settings.database,
-            "user": settings.user,
-            "placeholder_credentials": settings.using_placeholder_credentials(),
-            "source": settings.database_source,
-        },
-    }
+    return {"ok": True, "database": _database_state()}
+
+
+def _load_database_override_source(raw: str) -> Dict[str, Any]:
+    """Parse CLI-provided JSON payloads for runtime database overrides."""
+
+    candidate = raw.strip()
+    if not candidate:
+        raise SystemExit("Database override payload must not be empty")
+
+    if candidate.startswith("@"):
+        target = candidate[1:]
+        if not target:
+            raise SystemExit("Database override payload path must not be empty")
+
+        if target == "-":
+            payload_text = sys.stdin.read()
+        else:
+            path = Path(target).expanduser()
+            try:
+                payload_text = path.read_text(encoding="utf-8")
+            except FileNotFoundError as exc:  # pragma: no cover - trivial IO failure
+                raise SystemExit(f"Database override file not found: {path}") from exc
+    else:
+        payload_text = candidate
+
+    try:
+        data = json.loads(payload_text)
+    except json.JSONDecodeError as exc:  # pragma: no cover - validation safeguard
+        raise SystemExit(f"Invalid JSON payload for database override: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise SystemExit("Database override payload must be a JSON object")
+
+    return data
+
+
+@app.post("/configure/database")
+async def configure_database(payload: DatabaseConfigRequest):
+    """Apply runtime database settings provided by the MCP client."""
+
+    return _apply_database_override(payload)
 
 
 def _health_response(*, ping_vertica: bool) -> Dict[str, Any]:
