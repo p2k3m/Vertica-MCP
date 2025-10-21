@@ -35,6 +35,81 @@ class NaclCheckResult:
     outbound_allows_end: bool
 
 
+def format_range(start: int, end: int) -> str:
+    return str(start) if start == end else f"{start}-{end}"
+
+
+def summarize_security_groups(
+    results: Iterable[SecurityGroupCheckResult],
+    port: int,
+    return_start: int,
+    return_end: int,
+    cidr: str,
+) -> str:
+    lines = [
+        "Security group evaluation:",
+    ]
+    port_range = format_range(return_start, return_end)
+    for result in results:
+        inbound = "allows" if result.inbound_allows else "blocks"
+        outbound = "allows" if result.outbound_allows else "blocks"
+        lines.append(
+            f"  - {result.group_id} {inbound} inbound TCP {port} from {cidr}"
+        )
+        lines.append(
+            f"    and {outbound} outbound TCP {port_range} to {cidr}."
+        )
+    return "\n".join(lines)
+
+
+def summarize_nacls(
+    results: Iterable[NaclCheckResult],
+    port: int,
+    return_start: int,
+    return_end: int,
+    cidr: str,
+) -> str:
+    lines = [
+        "Network ACL evaluation:",
+    ]
+    port_range = format_range(return_start, return_end)
+    for result in results:
+        inbound = "allows" if result.inbound_allows else "blocks"
+        outbound_start = "allows" if result.outbound_allows_start else "blocks"
+        outbound_end = "allows" if result.outbound_allows_end else "blocks"
+        outbound_summary = "allows" if result.outbound_allows_start and result.outbound_allows_end else "blocks"
+        lines.append(
+            f"  - {result.nacl_id} {inbound} inbound TCP {port} from {cidr}"
+        )
+        lines.append(
+            f"    outbound start/end checks: {outbound_start} {return_start}, {outbound_end} {return_end} (overall {outbound_summary} {port_range})."
+        )
+    return "\n".join(lines)
+
+
+def describe_network_flow(
+    port: int,
+    return_start: int,
+    return_end: int,
+    cidr: str,
+    security_groups: Iterable[SecurityGroupCheckResult],
+    nacls: Iterable[NaclCheckResult],
+) -> str:
+    sg_ids = ", ".join(result.group_id for result in security_groups) or "none"
+    nacl_ids = ", ".join(result.nacl_id for result in nacls) or "none"
+    port_range = format_range(return_start, return_end)
+    return "\n".join(
+        [
+            "Deployment network flow:",
+            f"  • Client traffic targets TCP {port} on the EC2 host.",
+            f"  • Security group(s) [{sg_ids}] gate this traffic before it reaches the subnet.",
+            f"  • Subnet network ACL(s) [{nacl_ids}] must also allow the request and subsequent return traffic {port_range}.",
+            f"  • The systemd service maps host port {port} to the Docker container, so permitted packets are delivered directly to the MCP server.",
+            f"  • Responses travel back through the Docker port, the security group egress rules, and the subnet ACL rules to {cidr}.",
+        ]
+    )
+
+
 def run_aws_command(args: List[str]) -> dict:
     """Run an AWS CLI command and parse its JSON output."""
 
@@ -234,6 +309,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     nacl_results = evaluate_nacls(subnet_id, args.port, args.return_port_start, args.return_port_end, args.cidr)
 
     errors: List[str] = []
+
+    print(summarize_security_groups(sg_results, args.port, args.return_port_start, args.return_port_end, args.cidr))
+    print()
+    print(summarize_nacls(nacl_results, args.port, args.return_port_start, args.return_port_end, args.cidr))
+    print()
+    print(describe_network_flow(args.port, args.return_port_start, args.return_port_end, args.cidr, sg_results, nacl_results))
+    print()
 
     if not any(result.inbound_allows for result in sg_results):
         ids = ", ".join(result.group_id for result in sg_results)

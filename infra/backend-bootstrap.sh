@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+log_step() {
+  local timestamp
+  timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  printf '[backend-bootstrap][%s] %s\n' "${timestamp}" "$*" >&2
+}
+
 if [[ -z "${AWS_REGION:-}" ]]; then
   echo "AWS_REGION must be set" >&2
   exit 1
@@ -55,6 +61,7 @@ STATE_BUCKET=$(sanitize_bucket_name "${STATE_BUCKET_RAW}")
 LOCK_TABLE="tf-locks"
 
 ensure_bucket() {
+  log_step "Ensuring S3 bucket ${STATE_BUCKET} exists for remote state"
   if aws s3api head-bucket --bucket "${STATE_BUCKET}" 2>/dev/null; then
     return
   fi
@@ -68,6 +75,7 @@ ensure_bucket() {
 }
 
 ensure_bucket_versioning() {
+  log_step "Ensuring versioning is enabled on ${STATE_BUCKET}"
   local status
   status=$(aws s3api get-bucket-versioning --bucket "${STATE_BUCKET}" --query 'Status' --output text 2>/dev/null || true)
   if [[ "${status}" != "Enabled" ]]; then
@@ -78,6 +86,7 @@ ensure_bucket_versioning() {
 }
 
 ensure_bucket_encryption() {
+  log_step "Ensuring server-side encryption is configured on ${STATE_BUCKET}"
   if ! aws s3api get-bucket-encryption --bucket "${STATE_BUCKET}" 1>/dev/null 2>&1; then
     aws s3api put-bucket-encryption \
       --bucket "${STATE_BUCKET}" \
@@ -86,6 +95,7 @@ ensure_bucket_encryption() {
 }
 
 ensure_bucket_tags() {
+  log_step "Tagging remote state bucket ${STATE_BUCKET}"
   local tagging_payload
   tagging_payload=$(cat <<EOF_TAGS
 {"TagSet":[{"Key":"Project","Value":"${PROJECT_TAG_VALUE}"},{"Key":"Repo","Value":"${REPO_TAG_VALUE}"}]}
@@ -97,6 +107,7 @@ EOF_TAGS
 }
 
 ensure_lock_table() {
+  log_step "Ensuring DynamoDB table ${LOCK_TABLE} exists for state locking"
   if aws dynamodb describe-table --table-name "${LOCK_TABLE}" 1>/dev/null 2>&1; then
     return
   fi
@@ -110,6 +121,7 @@ ensure_lock_table() {
 }
 
 ensure_lock_table_tags() {
+  log_step "Tagging DynamoDB table ${LOCK_TABLE}"
   local table_arn
   table_arn=$(aws dynamodb describe-table --table-name "${LOCK_TABLE}" --query 'Table.TableArn' --output text 2>/dev/null)
   if [[ -z "${table_arn}" || "${table_arn}" == "None" ]]; then
@@ -123,6 +135,7 @@ ensure_lock_table_tags() {
 }
 
 write_backend_file() {
+  log_step "Writing backend.tf pointing to bucket ${STATE_BUCKET} and table ${LOCK_TABLE}"
   cat >"${BACKEND_FILE}" <<EOF_BACKEND
 terraform {
   backend "s3" {
@@ -144,4 +157,4 @@ ensure_lock_table
 ensure_lock_table_tags
 write_backend_file
 
-echo "Terraform backend configuration written to ${BACKEND_FILE}" >&2
+log_step "Terraform backend configuration written to ${BACKEND_FILE}"
