@@ -18,6 +18,7 @@ from . import pool as pool_module
 from .config import settings
 from .runtime import (
     allow_loopback_listen,
+    external_ip_info,
     is_bindable_listen_host,
     resolve_listen_host,
     resolve_listen_port,
@@ -114,6 +115,21 @@ def _runtime_diagnostics() -> Dict[str, Any]:
         "platform": platform.platform(),
         "pid": os.getpid(),
         "service_version": _service_version(),
+    }
+
+
+def _runtime_status() -> Dict[str, Any]:
+    listen_host = resolve_listen_host(log=logger)
+    listen_port = resolve_listen_port(log=logger)
+    loopback_allowed = allow_loopback_listen()
+
+    return {
+        "listen": {
+            "host": listen_host,
+            "port": listen_port,
+            "loopback_allowed": loopback_allowed,
+        },
+        "external_ip": external_ip_info(),
     }
 
 
@@ -306,11 +322,13 @@ def _health_response(*, ping_vertica: bool) -> Dict[str, Any]:
         "runtime": _runtime_diagnostics(),
         "config": _config_diagnostics(),
     }
+    status = {"runtime": _runtime_status()}
     return {
         "ok": ok,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "checks": checks,
         "diagnostics": diagnostics,
+        "status": status,
     }
 
 

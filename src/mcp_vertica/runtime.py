@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from contextlib import suppress
 from ipaddress import ip_address
+from typing import Any, Dict, List
+from urllib.error import URLError
+from urllib.request import urlopen
 
 __all__ = [
     "allow_loopback_listen",
+    "external_ip_info",
     "is_bindable_listen_host",
     "resolve_listen_host",
     "resolve_listen_port",
@@ -29,6 +34,67 @@ def allow_loopback_listen() -> bool:
         "yes",
         "on",
     }
+
+
+def external_ip_info(*, timeout: float = 2.0) -> Dict[str, Any]:
+    """Best-effort discovery of the MCP runtime's external IP address."""
+
+    configured = os.environ.get("EXTERNAL_IP", "").strip()
+    if configured:
+        return {
+            "ok": True,
+            "ip": configured,
+            "source": "environment",
+        }
+
+    providers: List[tuple[str, str | None]] = [
+        ("https://api.ipify.org?format=json", "ip"),
+        ("https://ifconfig.co/json", "ip"),
+    ]
+
+    errors: List[Dict[str, Any]] = []
+    for url, key in providers:
+        try:
+            with urlopen(url, timeout=timeout) as response:
+                raw = response.read().decode("utf-8")
+        except (TimeoutError, URLError, OSError) as exc:
+            errors.append(
+                {
+                    "source": url,
+                    "error": str(exc),
+                    "exception": exc.__class__.__name__,
+                }
+            )
+            continue
+
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            errors.append(
+                {
+                    "source": url,
+                    "error": f"Failed to decode response: {exc}",
+                    "exception": exc.__class__.__name__,
+                }
+            )
+            continue
+
+        candidate = payload.get(key) if key else None
+        if candidate:
+            return {
+                "ok": True,
+                "ip": str(candidate).strip(),
+                "source": url,
+            }
+
+        errors.append(
+            {
+                "source": url,
+                "error": f"Response missing expected key {key!r}",
+            }
+        )
+
+    return {"ok": False, "errors": errors}
 
 
 def resolve_listen_host(*, log: logging.Logger | None = None) -> str:
