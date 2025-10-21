@@ -7,7 +7,7 @@ FROM public.ecr.aws/docker/library/python:3.12.5-slim
 WORKDIR /app
 COPY pyproject.toml /app/
 RUN pip install --no-cache-dir uv && \
-uv pip install --system fastapi>=0.115 uvicorn>=0.30 mcp>=1.2.0 vertica-python>=1.4.0 pydantic>=2.8
+uv pip install --system fastapi>=0.115 uvicorn>=0.30 mcp>=1.2.0 vertica-python>=1.4.0 pydantic>=2.8 python-dotenv>=1.0
 COPY src/ /app/src/
 ENV PYTHONPATH=/app/src
 EXPOSE 8000

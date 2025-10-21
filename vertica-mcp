@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+"""Convenience launcher for the Vertica MCP HTTP server."""
+
+from mcp_vertica.server import main
+
+
+if __name__ == "__main__":
+    main()
