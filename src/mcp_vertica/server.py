@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from . import pool as pool_module
-from .config import settings
+from .config import DatabaseOverrides, settings
 from .runtime import (
     allow_loopback_listen,
     external_ip_info,
@@ -142,6 +142,7 @@ def _config_diagnostics() -> Dict[str, Any]:
             "database": settings.database,
             "user": settings.user,
             "placeholder_credentials": settings.using_placeholder_credentials(),
+            "source": settings.database_source,
         },
         "pool": {
             "size": settings.pool_size,
@@ -306,6 +307,40 @@ if __name__ == "__main__":  # pragma: no cover - runtime behaviour
 
 class QueryRequest(BaseModel):
     query: str = Field(..., description="SQL SELECT statement to execute")
+
+
+class DatabaseConfigRequest(DatabaseOverrides):
+    """Pydantic model for runtime database configuration updates."""
+
+
+@app.post("/configure/database")
+async def configure_database(payload: DatabaseConfigRequest):
+    """Apply runtime database settings provided by the MCP client."""
+
+    logger.info("Applying runtime Vertica database configuration via API override")
+    settings.apply_database_overrides(payload)
+    try:
+        pool_module.reset_pool()
+    except AttributeError:
+        # Older pool modules may not have reset support; create it lazily.
+        logger.debug("Pool module missing reset_pool(); no existing connections cleared")
+    else:
+        logger.info(
+            "Vertica connection pool reset after runtime configuration update (size=%s)",
+            settings.pool_size,
+        )
+
+    return {
+        "ok": True,
+        "database": {
+            "host": settings.host,
+            "port": settings.port,
+            "database": settings.database,
+            "user": settings.user,
+            "placeholder_credentials": settings.using_placeholder_credentials(),
+            "source": settings.database_source,
+        },
+    }
 
 
 def _health_response(*, ping_vertica: bool) -> Dict[str, Any]:
