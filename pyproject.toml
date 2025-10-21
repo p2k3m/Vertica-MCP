@@ -6,7 +6,8 @@ dependencies = [
 "uvicorn>=0.30",
 "mcp>=1.2.0",
 "vertica-python>=1.4.0",
-"pydantic>=2.8"
+"pydantic>=2.8",
+"python-dotenv>=1.0"
 ]
 [tool.pytest.ini_options]
 pythonpath = ["src"]

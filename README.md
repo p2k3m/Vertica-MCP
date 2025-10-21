@@ -9,6 +9,12 @@ run the automated test suite before opening a pull request:
 pytest
 ```
 
+The service now requires a `.env` file at the project root. The repository ships
+with a development-safe default that matches the Terraform configuration; add
+your own secrets before deploying anywhere outside of local testing. Startup
+fails fast with a clear error message if the file is missing so deployments
+never fall back to placeholder credentials.
+
 To expose the MCP over HTTP when running locally, start the FastMCP runtime in
 HTTP mode and bind it to a public interface. The packaged defaults mirror the
 production deployment by listening on `0.0.0.0:8000` unless overridden with the
@@ -16,6 +22,18 @@ production deployment by listening on `0.0.0.0:8000` unless overridden with the
 
 ```bash
 uvx mcp server --transport streamable-http mcp_vertica.tools:mcp
+```
+
+For a one-command launch that matches the EC2 configuration you can now run:
+
+```bash
+python vertica-mcp
+```
+
+Or use the npm wrapper when Node is your entry point:
+
+```bash
+npm start
 ```
 
 ## Deployment & destruction
@@ -94,7 +112,8 @@ sure the MCP process is reachable from your host when testing locally:
 
 * **Docker runs** – Map the container port to the host with
   `-p 8000:8000` (or the port you configured) so requests outside the Docker
-  network can reach the MCP service.
+  network can reach the MCP service. The bundled `docker-compose.yml` does this
+  automatically and shares the `.env` file with the container.
 * **Native runs** – Launch the MCP with the HTTP transport
   (`uvx mcp server --transport streamable-http ...`) and verify the runtime
   dependencies are installed (`pip install -e .[dev]`, Node, etc.). Bind the
