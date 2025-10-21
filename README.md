@@ -69,15 +69,15 @@ manually.
 <!-- BEGIN MCP ENDPOINTS -->
 
 **Direct EC2 (HTTP on port 8000)**  
-* Base URL: [`http://3.108.10.4:8000/`](http://3.108.10.4:8000/)
-* Health check: [`http://3.108.10.4:8000/healthz`](http://3.108.10.4:8000/healthz)
-* Server-Sent Events: [`http://3.108.10.4:8000/sse`](http://3.108.10.4:8000/sse)
-* Public IP: `3.108.10.4`
-* Public DNS: `ec2-3-108-10-4.ap-south-1.compute.amazonaws.com`
+* Base URL: [`http://13.200.16.7:8000/`](http://13.200.16.7:8000/)
+* Health check: [`http://13.200.16.7:8000/healthz`](http://13.200.16.7:8000/healthz)
+* Server-Sent Events: [`http://13.200.16.7:8000/sse`](http://13.200.16.7:8000/sse)
+* Public IP: `13.200.16.7`
+* Public DNS: `ec2-13-200-16-7.ap-south-1.compute.amazonaws.com`
 
 **CloudFront (HTTPS)**  
 * Not enabled for this deployment.
 
-_Last updated: 2025-10-21 01:46:27Z_
+_Last updated: 2025-10-21 01:59:01Z_
 
 <!-- END MCP ENDPOINTS -->
