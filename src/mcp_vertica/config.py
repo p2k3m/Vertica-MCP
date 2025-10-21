@@ -161,6 +161,16 @@ class Settings(BaseModel):
     def allowed_schema_set(self) -> set[str]:
         return {schema.lower() for schema in self.allowed_schemas}
 
+    def using_placeholder_credentials(self) -> bool:
+        """Return ``True`` when the Vertica credentials look like repo defaults."""
+
+        return (
+            self.host == DEFAULT_DB_HOST
+            and self.user == DEFAULT_DB_USER
+            and self.password == DEFAULT_DB_PASSWORD
+            and self.database == DEFAULT_DB_NAME
+        )
+
 
 try:
     settings = Settings()

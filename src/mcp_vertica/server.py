@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Sequence
 
 from fastapi import FastAPI, Query, Request, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from . import pool as pool_module
@@ -57,6 +58,15 @@ def _database_check() -> Dict[str, Any]:
         "database": settings.database,
         "user": settings.user,
     }
+
+    if settings.using_placeholder_credentials():
+        return {
+            "ok": False,
+            "pool": pool_info,
+            "target": target,
+            "error": "Vertica credentials are using repository placeholder values.",
+            "placeholder_credentials": True,
+        }
 
     start = time.perf_counter()
     cursor = None
@@ -109,6 +119,7 @@ def _config_diagnostics() -> Dict[str, Any]:
             "port": settings.port,
             "database": settings.database,
             "user": settings.user,
+            "placeholder_credentials": settings.using_placeholder_credentials(),
         },
         "pool": {
             "size": settings.pool_size,
@@ -275,7 +286,9 @@ async def root() -> Dict[str, Any]:
 
 @app.get("/healthz")
 async def healthz(ping_vertica: bool = Query(False, alias="ping-vertica")):
-    return _health_response(ping_vertica=ping_vertica)
+    payload = _health_response(ping_vertica=ping_vertica)
+    status = 200 if payload.get("ok") else 503
+    return JSONResponse(payload, status_code=status)
 
 
 @app.get("/status", include_in_schema=False)
@@ -286,7 +299,8 @@ async def status():
     probes remain lightweight.
     """
 
-    return _health_response(ping_vertica=False)
+    payload = _health_response(ping_vertica=False)
+    return JSONResponse(payload, status_code=200)
 
 
 @app.get("/diagnostics")
@@ -324,6 +338,11 @@ async def _startup_validation() -> None:
         settings.database,
         settings.user,
     )
+
+    if settings.using_placeholder_credentials():
+        logger.error(
+            "Vertica credentials are still set to repository placeholder values; update your .env before deployment."
+        )
 
     result = _database_check()
     if not result.get("ok"):
