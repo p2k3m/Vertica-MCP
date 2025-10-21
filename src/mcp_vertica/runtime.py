@@ -7,7 +7,12 @@ import os
 from contextlib import suppress
 from ipaddress import ip_address
 
-__all__ = ["resolve_listen_host", "resolve_listen_port"]
+__all__ = [
+    "allow_loopback_listen",
+    "is_bindable_listen_host",
+    "resolve_listen_host",
+    "resolve_listen_port",
+]
 
 logger = logging.getLogger("mcp_vertica.runtime")
 
@@ -15,17 +20,23 @@ _BIND_HOST_KEYS = ("LISTEN_HOST", "MCP_LISTEN_HOST", "BIND_HOST", "MCP_BIND_HOST
 _BIND_PORT_KEYS = ("LISTEN_PORT", "MCP_LISTEN_PORT", "BIND_PORT", "MCP_BIND_PORT", "PORT")
 
 
-def resolve_listen_host(*, log: logging.Logger | None = None) -> str:
-    """Determine the HTTP bind address for the MCP service."""
+def allow_loopback_listen() -> bool:
+    """Return ``True`` when loopback interfaces are allowed."""
 
-    log = log or logger
-
-    allow_loopback = os.environ.get("ALLOW_LOOPBACK_LISTEN", "").strip().lower() in {
+    return os.environ.get("ALLOW_LOOPBACK_LISTEN", "").strip().lower() in {
         "1",
         "true",
         "yes",
         "on",
     }
+
+
+def resolve_listen_host(*, log: logging.Logger | None = None) -> str:
+    """Determine the HTTP bind address for the MCP service."""
+
+    log = log or logger
+
+    allow_loopback = allow_loopback_listen()
 
     for key in _BIND_HOST_KEYS:
         value = os.environ.get(key)
@@ -36,7 +47,7 @@ def resolve_listen_host(*, log: logging.Logger | None = None) -> str:
         if not candidate:
             continue
 
-        if _is_bindable_host(candidate, allow_loopback=allow_loopback):
+        if is_bindable_listen_host(candidate, allow_loopback=allow_loopback):
             return candidate
 
         log.warning(
@@ -52,7 +63,7 @@ def resolve_listen_host(*, log: logging.Logger | None = None) -> str:
     legacy_host = os.environ.get("HOST")
     if legacy_host and legacy_host.strip():
         candidate = legacy_host.strip()
-        if _is_bindable_host(candidate):
+        if is_bindable_listen_host(candidate):
             return candidate
         log.warning(
             "Ignoring HOST environment variable value %r; set LISTEN_HOST to override the bind address.",
@@ -76,13 +87,16 @@ def resolve_listen_port(*, log: logging.Logger | None = None) -> int:
     return 8000
 
 
-def _is_bindable_host(value: str, *, allow_loopback: bool = False) -> bool:
+def is_bindable_listen_host(value: str, *, allow_loopback: bool | None = None) -> bool:
     if not value:
         return False
 
     candidate = value.strip()
     if not candidate:
         return False
+
+    if allow_loopback is None:
+        allow_loopback = allow_loopback_listen()
 
     with suppress(ValueError):
         ip = ip_address(candidate)

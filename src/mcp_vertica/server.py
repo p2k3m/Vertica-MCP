@@ -16,7 +16,12 @@ from pydantic import BaseModel, Field
 
 from . import pool as pool_module
 from .config import settings
-from .runtime import resolve_listen_host, resolve_listen_port
+from .runtime import (
+    allow_loopback_listen,
+    is_bindable_listen_host,
+    resolve_listen_host,
+    resolve_listen_port,
+)
 from .tools import mcp
 
 try:  # pragma: no cover - importlib.metadata always present on modern Python
@@ -185,13 +190,49 @@ def _query_execution(query: str) -> Dict[str, Any]:
                 cursor.close()
 
 
+def _resolve_host_override(host: str | None) -> str:
+    allow_loopback = allow_loopback_listen()
+    resolved = resolve_listen_host(log=logger)
+
+    if host is None:
+        return resolved
+
+    candidate = host.strip()
+    if not candidate:
+        logger.warning("Ignoring empty CLI --host override; using %s", resolved)
+        return resolved
+
+    if is_bindable_listen_host(candidate, allow_loopback=allow_loopback):
+        return candidate
+
+    logger.warning("Ignoring CLI --host override %r; not a bindable interface.", host)
+    if candidate in {"127.0.0.1", "localhost"} and not allow_loopback:
+        logger.warning(
+            "Set ALLOW_LOOPBACK_LISTEN=1 to bind Vertica MCP to loopback interfaces explicitly.",
+        )
+
+    return resolved
+
+
+def _resolve_port_override(port: int | None) -> int:
+    resolved = resolve_listen_port(log=logger)
+
+    if port is None:
+        return resolved
+
+    if not (0 < port < 65536):
+        raise SystemExit(f"Port {port!r} is outside the valid TCP port range (1-65535).")
+
+    return port
+
+
 def _run_server(*, host: str | None = None, port: int | None = None) -> None:
     """Run the MCP API using uvicorn."""
 
     import uvicorn  # Imported lazily so unit tests without uvicorn still pass
 
-    resolved_host = host or resolve_listen_host(log=logger)
-    resolved_port = port or resolve_listen_port(log=logger)
+    resolved_host = _resolve_host_override(host)
+    resolved_port = _resolve_port_override(port)
 
     uvicorn.run(
         "mcp_vertica.server:app",
