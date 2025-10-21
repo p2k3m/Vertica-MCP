@@ -294,6 +294,14 @@ def _parse_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "object or prefix a file path with @ (for example @payload.json or @- for stdin)."
         ),
     )
+    parser.add_argument(
+        "--connection-test",
+        action="store_true",
+        help=(
+            "Verify Vertica connectivity before launching the MCP server. "
+            "If the connectivity check fails the process exits with a non-zero status."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -311,6 +319,19 @@ def main(argv: Sequence[str] | None = None) -> None:
         data = _load_database_override_source(args.database_payload)
         overrides = DatabaseOverrides.model_validate(data)
         _apply_database_override(overrides)
+
+    if args.connection_test:
+        result = _database_check()
+        if not result.get("ok"):
+            logger.error(
+                "Vertica connection test failed: %s", result.get("error", "unknown")
+            )
+            raise SystemExit(1)
+
+        logger.info(
+            "Vertica connection test succeeded in %sms",
+            result.get("latency_ms", "?"),
+        )
 
     _run_server(host=args.host, port=args.port)
 

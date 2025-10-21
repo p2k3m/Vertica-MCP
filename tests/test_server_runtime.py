@@ -167,6 +167,43 @@ def test_main_applies_database_override_payload(monkeypatch: pytest.MonkeyPatch)
     assert captured["port"] == 8000
 
 
+def test_main_runs_connection_test_before_launch(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    captured = _fake_uvicorn(monkeypatch)
+
+    def successful_check() -> dict[str, object]:  # pragma: no cover - simple stub
+        return {"ok": True, "latency_ms": 12.5}
+
+    monkeypatch.setattr(server, "_database_check", successful_check)
+
+    with caplog.at_level("INFO"):
+        server.main(["--connection-test"])
+
+    assert captured["host"] == "0.0.0.0"
+    assert captured["port"] == 8000
+    assert "Vertica connection test succeeded" in caplog.text
+
+
+def test_main_aborts_when_connection_test_fails(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    captured = _fake_uvicorn(monkeypatch)
+
+    def failing_check() -> dict[str, object]:  # pragma: no cover - simple stub
+        return {"ok": False, "error": "boom"}
+
+    monkeypatch.setattr(server, "_database_check", failing_check)
+
+    with caplog.at_level("ERROR"):
+        with pytest.raises(SystemExit) as exc:
+            server.main(["--connection-test"])
+
+    assert exc.value.code == 1
+    assert "Vertica connection test failed" in caplog.text
+    assert "app" not in captured
+
+
 def test_main_loads_database_override_from_file(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     captured = _fake_uvicorn(monkeypatch)
     payload = {
