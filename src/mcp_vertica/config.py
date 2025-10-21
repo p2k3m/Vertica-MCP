@@ -9,9 +9,17 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Iterable
+from typing import Any, Iterable
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+)
+from pydantic.fields import PrivateAttr
 
 from .env import ensure_dotenv
 
@@ -145,8 +153,33 @@ def _split_csv(value: str | None, fallback: Iterable[str]) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+class DatabaseOverrides(BaseModel):
+    """Runtime database configuration supplied via the API."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    host: str
+    port: int = Field(ge=1, le=65535)
+    user: str
+    password: str
+    database: str
+
+    @field_validator("host", "user", "password", "database", mode="before")
+    @classmethod
+    def _coerce_non_empty(cls, value: Any, info: ValidationInfo) -> str:
+        if value is None:
+            raise ValueError(f"{info.field_name.replace('_', ' ')} must not be empty")
+
+        candidate = str(value).strip()
+        if not candidate:
+            raise ValueError(f"{info.field_name.replace('_', ' ')} must not be empty")
+        return candidate
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(extra="ignore", validate_default=True)
+
+    _database_source: str = PrivateAttr(default="environment")
 
     host: str = Field(
         default_factory=lambda: _env_or_default("DB_HOST", DEFAULT_DB_HOST)
@@ -200,6 +233,9 @@ class Settings(BaseModel):
         default_factory=lambda: _env_bool("DB_DEBUG", default=False)
     )
 
+    def model_post_init(self, __context: Any) -> None:  # pragma: no cover - simple assignment
+        self._database_source = "environment"
+
     @field_validator("allowed_schemas")
     @classmethod
     def _validate_schemas(cls, value: list[str]) -> list[str]:
@@ -223,6 +259,31 @@ class Settings(BaseModel):
             and self.password == DEFAULT_DB_PASSWORD
             and self.database == DEFAULT_DB_NAME
         )
+
+    @property
+    def database_source(self) -> str:
+        return self._database_source
+
+    def apply_database_overrides(self, overrides: DatabaseOverrides) -> None:
+        """Apply runtime database configuration provided via the HTTP API."""
+
+        data = overrides.model_dump()
+        updated = self.model_copy(update=data)
+
+        for key in ("host", "port", "user", "password", "database"):
+            object.__setattr__(self, key, getattr(updated, key))
+
+        self._database_source = "runtime"
+
+    def reload_from_environment(self) -> None:
+        """Refresh configuration from environment variables."""
+
+        refreshed = type(self)()
+
+        for key, value in refreshed.model_dump().items():
+            object.__setattr__(self, key, value)
+
+        self._database_source = refreshed.database_source
 
 
 try:

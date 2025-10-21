@@ -132,3 +132,52 @@ def test_config_import_requires_dotenv(monkeypatch):
     # Restore the original loader so later tests re-import configuration safely.
     monkeypatch.setattr(env_module, "ensure_dotenv", original)
     importlib.reload(config)
+
+
+def test_database_overrides_update_settings(monkeypatch):
+    _minimal_required_env(monkeypatch)
+    fresh = config.Settings()
+
+    overrides = config.DatabaseOverrides(
+        host="runtime.vertica.example.com",
+        port=5434,
+        user="runtime-user",
+        password="runtime-secret",
+        database="RuntimeMart",
+    )
+
+    assert fresh.database_source == "environment"
+
+    fresh.apply_database_overrides(overrides)
+
+    assert fresh.host == overrides.host
+    assert fresh.port == overrides.port
+    assert fresh.user == overrides.user
+    assert fresh.password == overrides.password
+    assert fresh.database == overrides.database
+    assert fresh.database_source == "runtime"
+    assert fresh.using_placeholder_credentials() is False
+
+
+def test_reload_from_environment_restores_source(monkeypatch):
+    _minimal_required_env(monkeypatch)
+    fresh = config.Settings()
+
+    overrides = config.DatabaseOverrides(
+        host="runtime.example.com",
+        port=6000,
+        user="runtime",
+        password="override",
+        database="runtime",
+    )
+    fresh.apply_database_overrides(overrides)
+    assert fresh.database_source == "runtime"
+
+    fresh.reload_from_environment()
+
+    assert fresh.host == "vertica.example.com"
+    assert fresh.port == 5433
+    assert fresh.user == "dbadmin"
+    assert fresh.password == "super-secret"
+    assert fresh.database == "VMart"
+    assert fresh.database_source == "environment"

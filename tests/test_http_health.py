@@ -42,6 +42,7 @@ def test_health_endpoint(monkeypatch, client):
     config = payload["diagnostics"]["config"]
     assert config["database"]["host"] == server.settings.host
     assert config["auth"]["http_token_configured"] is bool(server.settings.http_token)
+    assert config["database"]["source"] == server.settings.database_source
     assert config["database"]["placeholder_credentials"] is False
 
 

@@ -5,6 +5,47 @@ from contextlib import contextmanager
 from mcp_vertica import server
 
 
+def test_configure_database_endpoint_updates_settings(monkeypatch, client):
+    calls = {"reset": 0}
+
+    def fake_reset():
+        calls["reset"] += 1
+
+    monkeypatch.setattr(server.pool_module, "reset_pool", fake_reset)
+
+    payload = {
+        "host": "runtime.vertica.example.com",
+        "port": 5434,
+        "user": "runtime-user",
+        "password": "runtime-secret",
+        "database": "runtime",
+    }
+
+    try:
+        response = client.post("/configure/database", json=payload)
+        assert response.status_code == 200
+
+        body = response.json()
+        assert body["ok"] is True
+        database = body["database"]
+        assert database["host"] == payload["host"]
+        assert database["port"] == payload["port"]
+        assert database["database"] == payload["database"]
+        assert database["user"] == payload["user"]
+        assert database["source"] == "runtime"
+        assert database["placeholder_credentials"] is False
+        assert "password" not in database
+
+        assert server.settings.host == payload["host"]
+        assert server.settings.port == payload["port"]
+        assert server.settings.user == payload["user"]
+        assert server.settings.password == payload["password"]
+        assert server.settings.database == payload["database"]
+        assert calls["reset"] == 1
+    finally:
+        server.settings.reload_from_environment()
+
+
 def test_diagnostics_endpoint(client):
     response = client.get("/diagnostics")
     assert response.status_code == 200

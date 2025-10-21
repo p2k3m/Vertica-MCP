@@ -176,3 +176,36 @@ def get_conn():
                         "Failed to close Vertica connection after pool rejection: %s",
                         close_exc,
                     )
+
+
+def reset_pool() -> None:
+    """Flush existing connections and rebuild the pool."""
+
+    global _POOL
+
+    drained = []
+    queue = _POOL
+    if queue is not None:
+        while True:
+            try:
+                conn = queue.get_nowait()
+            except Empty:
+                break
+            else:
+                drained.append(conn)
+
+    for conn in drained:
+        try:
+            conn.close()
+        except Exception as exc:  # pragma: no cover - best effort cleanup
+            if settings.db_debug_logging:
+                logger.exception(
+                    "Failed to close Vertica connection during pool reset"
+                )
+            else:
+                logger.warning(
+                    "Failed to close Vertica connection during pool reset: %s",
+                    exc,
+                )
+
+    _POOL = Queue(maxsize=settings.pool_size)
