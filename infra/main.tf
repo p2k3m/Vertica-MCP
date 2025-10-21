@@ -122,7 +122,7 @@ locals {
     ExecStartPre=/bin/grep -Eq '^DB_NAME=.+' ${local.mcp_env_file_path}
     ExecStartPre=/usr/bin/docker pull ${local.container_image}
     ExecStartPre=/usr/bin/docker rm -f mcp || true
-    ExecStart=/usr/bin/docker run --name mcp -p 8000:8000 --restart unless-stopped --env-file ${local.mcp_env_file_path} ${local.container_image} python -m mcp_vertica.server
+    ExecStart=/usr/bin/docker run --name mcp -p 8000:8000 --restart unless-stopped --env-file ${local.mcp_env_file_path} -v ${local.mcp_env_file_path}:/app/.env:ro ${local.container_image} python -m mcp_vertica.server
     ExecStop=/usr/bin/docker stop mcp
     StandardOutput=journal
     StandardError=journal

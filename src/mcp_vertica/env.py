@@ -9,7 +9,9 @@ them from the repository root before any other modules evaluate their settings.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
+from textwrap import dedent
 
 from dotenv import load_dotenv
 
@@ -18,6 +20,23 @@ __all__ = ["ensure_dotenv"]
 logger = logging.getLogger("mcp_vertica.env")
 
 _DOTENV_LOADED = False
+
+
+def _candidate_paths() -> list[Path]:
+    """Return possible locations for the MCP ``.env`` file."""
+
+    overrides: list[str] = []
+    for key in ("VERTICA_MCP_ENV_FILE", "MCP_ENV_FILE"):
+        override = os.environ.get(key, "").strip()
+        if override:
+            overrides.append(override)
+
+    candidates = [Path(path).expanduser() for path in overrides]
+
+    project_root = Path(__file__).resolve().parent.parent.parent
+    candidates.append(project_root / ".env")
+
+    return candidates
 
 
 def ensure_dotenv() -> None:
@@ -33,17 +52,29 @@ def ensure_dotenv() -> None:
     if _DOTENV_LOADED:
         return
 
-    project_root = Path(__file__).resolve().parent.parent.parent
-    dotenv_path = project_root / ".env"
+    candidates = _candidate_paths()
 
-    if not dotenv_path.exists():  # pragma: no cover - defensive guard
+    existing_path = next((path for path in candidates if path.exists()), None)
+
+    if existing_path is None:
+        search_list = "\n".join(f"  - {path}" for path in candidates)
+        resolution = dedent(
+            """
+            Create the file with your Vertica connection settings or mount it into
+            the runtime container. When using Docker or the provisioned systemd
+            service, ensure the same file is available inside the container (for
+            example via ``-v /etc/mcp.env:/app/.env:ro``) or set the
+            ``VERTICA_MCP_ENV_FILE`` environment variable to the correct path.
+            """
+        ).strip()
         message = (
-            "Required environment file missing at "
-            f"{dotenv_path}. Create the file with your Vertica connection "
-            "settings before starting the server."
+            "Required environment file missing; checked the following locations:\n"
+            f"{search_list}\nResolution: {resolution}"
         )
         logger.critical(message)
         raise FileNotFoundError(message)
+
+    dotenv_path = existing_path
 
     loaded = load_dotenv(dotenv_path)
     if not loaded:
