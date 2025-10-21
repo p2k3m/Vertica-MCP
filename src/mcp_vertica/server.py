@@ -4,7 +4,6 @@ import logging
 import os
 import platform
 import time
-from ipaddress import ip_address
 from contextlib import suppress
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable
@@ -14,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from . import pool as pool_module
 from .config import settings
+from .runtime import resolve_listen_host, resolve_listen_port
 from .tools import mcp
 
 try:  # pragma: no cover - importlib.metadata always present on modern Python
@@ -172,116 +172,13 @@ def _query_execution(query: str) -> Dict[str, Any]:
                 cursor.close()
 
 
-def _resolve_listen_host() -> str:
-    allow_loopback = os.environ.get("ALLOW_LOOPBACK_LISTEN", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-
-    for key in ("LISTEN_HOST", "MCP_LISTEN_HOST", "BIND_HOST", "MCP_BIND_HOST"):
-        value = os.environ.get(key)
-        if not value:
-            continue
-
-        candidate = value.strip()
-        if not candidate:
-            continue
-
-        if _is_bindable_host(candidate, allow_loopback=allow_loopback):
-            return candidate
-
-        logger.warning(
-            "Ignoring %s environment variable value %r; not a bindable interface.",
-            key,
-            value,
-        )
-        if candidate in {"127.0.0.1", "localhost"} and not allow_loopback:
-            logger.warning(
-                "Set ALLOW_LOOPBACK_LISTEN=1 to bind Vertica MCP to loopback interfaces explicitly."
-            )
-
-    legacy_host = os.environ.get("HOST")
-    if legacy_host and legacy_host.strip():
-        candidate = legacy_host.strip()
-        if _is_bindable_host(candidate):
-            return candidate
-        logger.warning(
-            "Ignoring HOST environment variable value %r; set LISTEN_HOST to override the bind address.",
-            legacy_host,
-        )
-
-    return "0.0.0.0"
-
-
-def _resolve_listen_port() -> int:
-    for key in ("LISTEN_PORT", "MCP_LISTEN_PORT", "BIND_PORT", "MCP_BIND_PORT", "PORT"):
-        value = os.environ.get(key)
-        port = _coerce_port(value, key)
-        if port is not None:
-            return port
-
-    return 8000
-
-
-def _is_bindable_host(value: str, *, allow_loopback: bool = False) -> bool:
-    if not value:
-        return False
-
-    candidate = value.strip()
-    if not candidate:
-        return False
-
-    with suppress(ValueError):
-        ip = ip_address(candidate)
-        if ip.is_unspecified:
-            return True
-        if ip.is_loopback:
-            return allow_loopback
-        if ip.is_private:
-            return True
-        return False
-
-    return False
-
-
-def _coerce_port(raw: str | None, key: str) -> int | None:
-    if raw is None:
-        return None
-
-    candidate = raw.strip()
-    if not candidate:
-        return None
-
-    try:
-        port = int(candidate)
-    except ValueError:
-        logger.warning(
-            "Ignoring non-integer %s value %r when determining listen port.",
-            key,
-            raw,
-        )
-        return None
-
-    if not (0 < port < 65536):
-        logger.warning(
-            "%s value %r is outside the valid TCP port range; ignoring.",
-            key,
-            raw,
-        )
-        return None
-
-    return port
-
-
 def _run_server() -> None:
     """Run the MCP API using uvicorn."""
 
     import uvicorn  # Imported lazily so unit tests without uvicorn still pass
 
-    host = _resolve_listen_host()
-    port = _resolve_listen_port()
+    host = resolve_listen_host(log=logger)
+    port = resolve_listen_port(log=logger)
 
     uvicorn.run("mcp_vertica.server:app", host=host, port=port, log_level="info")
 

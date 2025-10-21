@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 from datetime import datetime, timezone
 
 import pytest
@@ -11,6 +12,28 @@ from mcp_vertica.sqlman import Provenance
 
 def _prov(name: str) -> Provenance:
     return Provenance(name, {}, datetime.now(timezone.utc).isoformat(), 0, 0.0)
+
+
+def test_mcp_http_transport_binds_public_interface() -> None:
+    with pytest.MonkeyPatch.context() as mp:
+        for key in ("LISTEN_HOST", "MCP_LISTEN_HOST", "BIND_HOST", "MCP_BIND_HOST", "HOST", "ALLOW_LOOPBACK_LISTEN"):
+            mp.delenv(key, raising=False)
+        importlib.reload(tools)
+        assert tools.mcp.settings.host == "0.0.0.0"
+        assert tools.mcp.settings.port == 8000
+
+    importlib.reload(tools)
+
+
+def test_mcp_http_transport_honours_listen_env() -> None:
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("LISTEN_HOST", "10.10.0.5")
+        mp.setenv("LISTEN_PORT", "9100")
+        importlib.reload(tools)
+        assert tools.mcp.settings.host == "10.10.0.5"
+        assert tools.mcp.settings.port == 9100
+
+    importlib.reload(tools)
 
 
 def test_repeat_issues_cluster_returns_provenance(monkeypatch: pytest.MonkeyPatch):
