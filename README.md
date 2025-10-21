@@ -76,15 +76,29 @@ Even when the MCP service is healthy, inbound traffic to an EC2 instance is
 blocked unless the AWS networking layers permit the request. When opening the
 application to the internet:
 
-1. **Security group rules** – Add an inbound rule that allows TCP traffic on
-   the port exposed by the app (for example `3000`, `8000`, or `8080`) from
-   `0.0.0.0/0` (or a more restrictive CIDR that matches your audience).
+1. **Security group rules** – AWS security groups deny all inbound traffic
+   except port `22` by default. Add an inbound rule that allows TCP traffic on
+   the MCP port (for example `8000`) from `0.0.0.0/0`, or from a more
+   restrictive CIDR that matches your audience.
 2. **Network ACLs** – Ensure the subnet's network ACL allows the same inbound
    port and the ephemeral port range (1024–65535) for return traffic so clients
    can receive responses.
 3. **Health verification** – After applying the rules, re-run the service
    health check endpoint (for example `/healthz`) from an external network to
    confirm connectivity.
+
+### Local port exposure tips
+
+The repository ships Docker- and natively-driven development workflows. Make
+sure the MCP process is reachable from your host when testing locally:
+
+* **Docker runs** – Map the container port to the host with
+  `-p 8000:8000` (or the port you configured) so requests outside the Docker
+  network can reach the MCP service.
+* **Native runs** – Launch the MCP with the HTTP transport
+  (`uvx mcp server --transport streamable-http ...`) and verify the runtime
+  dependencies are installed (`pip install -e .[dev]`, Node, etc.). Bind the
+  server to `0.0.0.0` or `127.0.0.1` to match how you plan to access it.
 
 ## Deployment endpoints
 
