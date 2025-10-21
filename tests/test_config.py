@@ -27,12 +27,16 @@ def test_optional_integers_ignore_blank_values(monkeypatch):
     monkeypatch.setenv("MAX_ROWS", " ")
     monkeypatch.setenv("QUERY_TIMEOUT_S", "")
     monkeypatch.setenv("POOL_SIZE", "\n")
+    monkeypatch.setenv("DB_CONNECTION_RETRIES", " ")
+    monkeypatch.setenv("DB_CONNECTION_RETRY_BACKOFF_S", "")
 
     fresh = config.Settings()
 
     assert fresh.max_rows == 1000
     assert fresh.query_timeout_s == 15
     assert fresh.pool_size == 8
+    assert fresh.connection_attempts == 3
+    assert fresh.connection_retry_backoff_s == 0.5
 
 
 def test_optional_strings_treat_blank_as_missing(monkeypatch):
@@ -85,6 +89,33 @@ def test_invalid_port_falls_back_to_default(monkeypatch, caplog):
 
     assert fresh.port == config.DEFAULT_DB_PORT
     assert any("invalid integer value" in message for message in caplog.messages)
+
+
+def test_debug_flags_and_retries(monkeypatch):
+    _minimal_required_env(monkeypatch)
+    monkeypatch.setenv("DB_CONNECTION_RETRIES", "5")
+    monkeypatch.setenv("DB_CONNECTION_RETRY_BACKOFF_S", "1.25")
+    monkeypatch.setenv("DB_DEBUG", "true")
+
+    fresh = config.Settings()
+
+    assert fresh.connection_attempts == 5
+    assert fresh.connection_retry_backoff_s == 1.25
+    assert fresh.db_debug_logging is True
+
+
+def test_invalid_retry_values_raise(monkeypatch):
+    _minimal_required_env(monkeypatch)
+    monkeypatch.setenv("DB_CONNECTION_RETRIES", "0")
+
+    with pytest.raises(config.ValidationError):
+        config.Settings()
+
+    monkeypatch.setenv("DB_CONNECTION_RETRIES", "2")
+    monkeypatch.setenv("DB_CONNECTION_RETRY_BACKOFF_S", "-1")
+
+    with pytest.raises(config.ValidationError):
+        config.Settings()
 
 
 def test_config_import_requires_dotenv(monkeypatch):

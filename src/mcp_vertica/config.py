@@ -103,6 +103,42 @@ def _env_int_or_default(
         return default
 
 
+def _env_float_or_default(
+    key: str,
+    default: float,
+    *,
+    warn_missing: bool = True,
+    warn_invalid: bool = True,
+) -> float:
+    value = _env(key)
+    if value is None:
+        if warn_missing:
+            _log_default(key, str(default), "missing")
+        return default
+
+    try:
+        return float(value)
+    except ValueError:
+        if warn_invalid:
+            _log_default(key, str(default), f"invalid float value {value!r}")
+        return default
+
+
+def _env_bool(key: str, default: bool = False) -> bool:
+    value = _env(key)
+    if value is None:
+        return default
+
+    candidate = value.strip().lower()
+    if candidate in {"1", "true", "yes", "on"}:
+        return True
+    if candidate in {"0", "false", "no", "off"}:
+        return False
+
+    _log_default(key, str(default), f"invalid boolean value {value!r}")
+    return default
+
+
 def _split_csv(value: str | None, fallback: Iterable[str]) -> list[str]:
     if not value:
         return list(fallback)
@@ -110,7 +146,7 @@ def _split_csv(value: str | None, fallback: Iterable[str]) -> list[str]:
 
 
 class Settings(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", validate_default=True)
 
     host: str = Field(
         default_factory=lambda: _env_or_default("DB_HOST", DEFAULT_DB_HOST)
@@ -140,11 +176,28 @@ class Settings(BaseModel):
         default_factory=lambda: _env_int_or_default("POOL_SIZE", 8, warn_missing=False)
     )
 
+    connection_attempts: int = Field(
+        default_factory=lambda: _env_int_or_default(
+            "DB_CONNECTION_RETRIES", 3, warn_missing=False
+        ),
+        ge=1,
+    )
+    connection_retry_backoff_s: float = Field(
+        default_factory=lambda: _env_float_or_default(
+            "DB_CONNECTION_RETRY_BACKOFF_S", 0.5, warn_missing=False
+        ),
+        ge=0,
+    )
+
     http_token: str | None = Field(default_factory=lambda: _env("HTTP_TOKEN"))
     cors_origins: str | None = Field(default_factory=lambda: _env("CORS_ORIGINS"))
 
     allowed_schemas: list[str] = Field(
         default_factory=lambda: _split_csv(_env("ALLOWED_SCHEMAS"), ["public"])
+    )
+
+    db_debug_logging: bool = Field(
+        default_factory=lambda: _env_bool("DB_DEBUG", default=False)
     )
 
     @field_validator("allowed_schemas")

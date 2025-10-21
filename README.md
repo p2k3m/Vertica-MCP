@@ -164,6 +164,33 @@ scripts, follow this workflow so EC2-hosted or LAN clients can connect:
    server or bounce the host networking stack, then hit `/healthz` from an
    external network to confirm the port is reachable.
 
+### Troubleshooting Vertica connectivity
+
+Database credentials are validated during startup, but networking issues or
+transient outages can still cause connection attempts to fail. The connection
+pool now retries failed Vertica handshakes up to `DB_CONNECTION_RETRIES` times
+(`3` by default) with a linear back-off governed by
+`DB_CONNECTION_RETRY_BACKOFF_S` (defaults to `0.5` seconds). When you need
+detailed stack traces—for example while debugging credentials or security group
+rules—set `DB_DEBUG=1` (or any truthy value such as `true`/`yes`). The pool logs
+each failed attempt and whether the connection was ultimately established,
+making it easier to correlate failures with upstream network events.
+
+### Recovering from failed pipeline runs
+
+GitHub Actions surfaces full Terraform logs when a deployment workflow fails.
+To recover:
+
+1. Inspect the failing job to confirm whether the error was environmental (for
+   example, AWS throttling) or configuration-driven.
+2. If the failure was transient, re-run the workflow from the GitHub UI. The MCP
+   wrapper will retry connection attempts using the new Vertica back-off and
+   resume from the most recent successful Terraform state.
+3. For persistent failures, reproduce locally with
+   `AWS_REGION=us-east-1 ./terraform.sh plan` (and `--recreate apply` when a
+   clean rebuild is required). Address the issue, push the fix, and then re-run
+   the GitHub workflow to confirm recovery.
+
 ### Claude Desktop integration
 
 Each `terraform.sh apply` run writes `build/mcp-a2a.json` and
