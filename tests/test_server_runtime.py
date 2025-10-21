@@ -79,12 +79,26 @@ def test_run_server_respects_explicit_listen_env(monkeypatch: pytest.MonkeyPatch
     captured = _fake_uvicorn(monkeypatch)
     monkeypatch.setenv("LISTEN_HOST", "127.0.0.1")
     monkeypatch.setenv("LISTEN_PORT", "9001")
+    monkeypatch.setenv("ALLOW_LOOPBACK_LISTEN", "1")
 
     server._run_server()
 
     assert captured["host"] == "127.0.0.1"
     assert captured["port"] == 9001
     assert captured["log_level"] == "info"
+
+
+def test_run_server_rejects_loopback_listen_host_by_default(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    captured = _fake_uvicorn(monkeypatch)
+    monkeypatch.setenv("LISTEN_HOST", "127.0.0.1")
+
+    with caplog.at_level("WARNING"):
+        server._run_server()
+
+    assert captured["host"] == "0.0.0.0"
+    assert "Ignoring LISTEN_HOST environment variable" in caplog.text
 
 
 def test_run_server_falls_back_to_port_env(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
