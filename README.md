@@ -125,11 +125,15 @@ sure the MCP process is reachable from your host when testing locally:
 * **Docker runs** – Map the container port to the host with
   `-p 8000:8000` (or the port you configured) so requests outside the Docker
   network can reach the MCP service. The bundled `docker-compose.yml` does this
-  automatically and shares the `.env` file with the container.
+  automatically and shares the `.env` file with the container. If you change the
+  exposed port, update the `PUBLIC_HTTP_PORT` environment variable so the
+  runtime can verify your container port mapping before startup.
 * **Native runs** – Launch the MCP with the HTTP transport
   (`uvx mcp server --transport streamable-http ...`) and verify the runtime
   dependencies are installed (`pip install -e .[dev]`, Node, etc.). Bind the
-  server to `0.0.0.0` or `127.0.0.1` to match how you plan to access it.
+  server to `0.0.0.0` or `127.0.0.1` to match how you plan to access it. When
+  selecting a non-default port, set `PUBLIC_HTTP_PORT` to the value you expose
+  so the preflight check can confirm the MCP is reachable externally.
 
 #### Manual HTTP transport startup checklist
 

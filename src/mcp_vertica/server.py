@@ -22,6 +22,7 @@ from .runtime import (
     is_bindable_listen_host,
     resolve_listen_host,
     resolve_listen_port,
+    require_public_port_alignment,
 )
 from .tools import mcp
 
@@ -249,6 +250,8 @@ def _run_server(*, host: str | None = None, port: int | None = None) -> None:
 
     resolved_host = _resolve_host_override(host)
     resolved_port = _resolve_port_override(port)
+
+    require_public_port_alignment(resolved_port, log=logger)
 
     uvicorn.run(
         "mcp_vertica.server:app",
