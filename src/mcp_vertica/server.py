@@ -181,7 +181,7 @@ def _resolve_listen_host() -> str:
     legacy_host = os.environ.get("HOST")
     if legacy_host and legacy_host.strip():
         candidate = legacy_host.strip()
-        if _is_socket_address(candidate):
+        if _is_bindable_host(candidate):
             return candidate
         logger.warning(
             "Ignoring HOST environment variable value %r; set LISTEN_HOST to override the bind address.",
@@ -201,7 +201,7 @@ def _resolve_listen_port() -> int:
     return 8000
 
 
-def _is_socket_address(value: str) -> bool:
+def _is_bindable_host(value: str) -> bool:
     if not value:
         return False
 
@@ -210,8 +210,14 @@ def _is_socket_address(value: str) -> bool:
         return False
 
     with suppress(ValueError):
-        ip_address(candidate)
-        return True
+        ip = ip_address(candidate)
+        if ip.is_unspecified or ip.is_loopback or ip.is_private:
+            return True
+        logger.warning(
+            "HOST environment variable value %r is not a local interface; ignoring.",
+            value,
+        )
+        return False
 
     return False
 
