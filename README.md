@@ -197,6 +197,34 @@ To recover:
    clean rebuild is required). Address the issue, push the fix, and then re-run
    the GitHub workflow to confirm recovery.
 
+### Switching Vertica connections at runtime
+
+The MCP can retarget its Vertica connection without a restart. Provide a JSON
+object containing the standard connection fields—`host`, `port`, `user`,
+`password`, and `database`—either when launching the CLI or via the HTTP API.
+
+* **CLI:** pass the payload with `--database-payload`. Inline JSON works, or
+  prefix a file path with `@` (for example `--database-payload @runtime.json`
+  or `--database-payload @-` to read from `stdin`). The credentials are applied
+  before the server starts and the connection pool is cleared automatically.
+* **HTTP API:** send the same payload to `POST /configure/database` to switch
+  the live service while it is running. The response omits the password but
+  confirms which connection is active.
+
+Example API call:
+
+```bash
+curl -X POST "http://localhost:8000/configure/database" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "host": "analytics.vertica.example.com",
+        "port": 5433,
+        "user": "runtime_user",
+        "password": "runtime_secret",
+        "database": "analytics"
+      }'
+```
+
 ### Claude Desktop integration
 
 Each `terraform.sh apply` run writes `build/mcp-a2a.json` and

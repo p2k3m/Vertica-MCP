@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import types
 
@@ -132,6 +133,71 @@ def test_main_respects_cli_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert captured["host"] == "10.0.0.5"
     assert captured["port"] == 9005
+
+
+def test_main_applies_database_override_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = _fake_uvicorn(monkeypatch)
+    calls = {"reset": 0}
+
+    def fake_reset() -> None:  # pragma: no cover - trivial
+        calls["reset"] += 1
+
+    monkeypatch.setattr(server.pool_module, "reset_pool", fake_reset)
+
+    payload = {
+        "host": "cli.example.com",
+        "port": 5444,
+        "user": "cli_user",
+        "password": "cli_secret",
+        "database": "cli_db",
+    }
+
+    try:
+        server.main(["--database-payload", json.dumps(payload)])
+        assert server.settings.host == payload["host"]
+        assert server.settings.port == payload["port"]
+        assert server.settings.user == payload["user"]
+        assert server.settings.password == payload["password"]
+        assert server.settings.database == payload["database"]
+        assert calls["reset"] == 1
+    finally:
+        server.settings.reload_from_environment()
+
+    assert captured["host"] == "0.0.0.0"
+    assert captured["port"] == 8000
+
+
+def test_main_loads_database_override_from_file(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = _fake_uvicorn(monkeypatch)
+    payload = {
+        "host": "file.example.com",
+        "port": 5555,
+        "user": "file_user",
+        "password": "file_secret",
+        "database": "file_db",
+    }
+    payload_path = tmp_path / "override.json"
+    payload_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    try:
+        server.main(["--database-payload", f"@{payload_path}"])
+        assert server.settings.host == payload["host"]
+        assert server.settings.port == payload["port"]
+        assert server.settings.user == payload["user"]
+        assert server.settings.password == payload["password"]
+        assert server.settings.database == payload["database"]
+    finally:
+        server.settings.reload_from_environment()
+
+    assert captured["host"] == "0.0.0.0"
+    assert captured["port"] == 8000
+
+
+def test_main_rejects_invalid_database_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_uvicorn(monkeypatch)
+
+    with pytest.raises(SystemExit):
+        server.main(["--database-payload", "{not-json}"])
 
 
 def test_run_server_errors_when_public_port_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
