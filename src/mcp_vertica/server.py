@@ -211,7 +211,9 @@ def _is_bindable_host(value: str) -> bool:
 
     with suppress(ValueError):
         ip = ip_address(candidate)
-        if ip.is_unspecified or ip.is_loopback or ip.is_private:
+        if ip.is_unspecified:
+            return True
+        if ip.is_private and not ip.is_loopback:
             return True
         logger.warning(
             "HOST environment variable value %r is not a local interface; ignoring.",

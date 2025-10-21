@@ -55,6 +55,17 @@ def test_run_server_ignores_public_ip_host_env(monkeypatch: pytest.MonkeyPatch, 
     assert "Ignoring HOST environment variable" in caplog.text
 
 
+def test_run_server_ignores_loopback_host_env(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    captured = _fake_uvicorn(monkeypatch)
+    monkeypatch.setenv("HOST", "127.0.0.1")
+
+    with caplog.at_level("WARNING"):
+        server._run_server()
+
+    assert captured["host"] == "0.0.0.0"
+    assert "Ignoring HOST environment variable" in caplog.text
+
+
 def test_run_server_respects_private_ip_host_env(monkeypatch: pytest.MonkeyPatch) -> None:
     captured = _fake_uvicorn(monkeypatch)
     monkeypatch.setenv("HOST", "10.1.2.3")
