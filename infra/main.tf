@@ -68,9 +68,10 @@ locals {
     DB_PASSWORD = var.db_password
     DB_NAME     = var.db_name
   }
+  listen_env_snippet        = { LISTEN_HOST = "0.0.0.0" }
   http_env_snippet          = local.http_token_trimmed == "" ? {} : { MCP_HTTP_TOKEN = local.http_token_trimmed }
-  mcp_env_map               = merge(local.db_env_snippet, local.http_env_snippet, var.mcp_environment)
-  mcp_env_reserved_keys     = ["DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME", "MCP_HTTP_TOKEN"]
+  mcp_env_map               = merge(local.listen_env_snippet, local.db_env_snippet, local.http_env_snippet, var.mcp_environment)
+  mcp_env_reserved_keys     = ["LISTEN_HOST", "DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME", "MCP_HTTP_TOKEN"]
   mcp_env_file_path         = "/etc/mcp.env"
   mcp_env_file_contents     = join(
     "\n",
