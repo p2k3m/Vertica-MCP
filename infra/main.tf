@@ -86,13 +86,76 @@ locals {
     ),
   )
   mcp_env_file_base64       = base64encode(local.mcp_env_file_contents)
+  health_check_script_path  = "/usr/local/bin/mcp-health-check.sh"
+  health_check_service_path = "/etc/systemd/system/mcp-healthcheck.service"
+  health_check_timer_path   = "/etc/systemd/system/mcp-healthcheck.timer"
+  health_check_script_contents = <<-SCRIPT
+    #!/bin/bash
+    set -euo pipefail
+
+    LOG_TAG="mcp-health-check"
+    HEALTH_ENDPOINT="http://127.0.0.1:8000/healthz"
+
+    if ! /usr/bin/systemctl is-active --quiet mcp.service; then
+      exit 0
+    fi
+
+    if ! /usr/bin/curl -fsS --max-time 5 "${HEALTH_ENDPOINT}" >/dev/null; then
+      {
+        printf 'Health check failed at %s; restarting mcp.service\n' "$(date --iso-8601=seconds)"
+      } | /usr/bin/systemd-cat -t "${LOG_TAG}"
+      /usr/bin/systemctl restart mcp.service
+      exit 1
+    fi
+
+    exit 0
+  SCRIPT
+  health_check_service_contents = <<-UNIT
+    [Unit]
+    Description=Run Vertica MCP health check
+    After=network-online.target
+
+    [Service]
+    Type=oneshot
+    ExecStart=${local.health_check_script_path}
+
+    [Install]
+    WantedBy=multi-user.target
+  UNIT
+  health_check_timer_contents = <<-UNIT
+    [Unit]
+    Description=Schedule Vertica MCP health checks
+
+    [Timer]
+    OnBootSec=1m
+    OnUnitActiveSec=1m
+    Unit=mcp-healthcheck.service
+
+    [Install]
+    WantedBy=timers.target
+  UNIT
+  health_check_script_command = join("\n", [
+    "cat <<'SCRIPT' >${local.health_check_script_path}",
+    trimspace(local.health_check_script_contents),
+    "SCRIPT",
+  ])
+  health_check_service_command = join("\n", [
+    "cat <<'UNIT' >${local.health_check_service_path}",
+    trimspace(local.health_check_service_contents),
+    "UNIT",
+  ])
+  health_check_timer_command = join("\n", [
+    "cat <<'UNIT' >${local.health_check_timer_path}",
+    trimspace(local.health_check_timer_contents),
+    "UNIT",
+  ])
   mcp_bootstrap_user_data   = <<-USERDATA
     #!/bin/bash
     set -euxo pipefail
 
     echo "[mcp] Bootstrapping MCP host" | tee /var/log/mcp-bootstrap.log
     dnf update -y
-    dnf install -y docker python3 python3-pip awscli jq
+    dnf install -y docker python3 python3-pip awscli jq curl
     python3 -m pip install --upgrade pip
     systemctl enable --now docker
     usermod -aG docker ec2-user || true
@@ -100,6 +163,16 @@ locals {
     echo '${local.mcp_env_file_base64}' | base64 -d >${local.mcp_env_file_path}
     chmod 600 ${local.mcp_env_file_path}
     chown root:root ${local.mcp_env_file_path}
+
+    ${local.health_check_script_command}
+    chmod 750 ${local.health_check_script_path}
+    chown root:root ${local.health_check_script_path}
+
+    ${local.health_check_service_command}
+    ${local.health_check_timer_command}
+
+    systemctl daemon-reload
+    systemctl enable --now mcp-healthcheck.timer
 
     printf 'Bootstrap completed at %s\n' "$(date --iso-8601=seconds)" >>/var/log/mcp-bootstrap.log
   USERDATA
@@ -468,13 +541,21 @@ resource "aws_ssm_document" "mcp_run" {
             "set -euo pipefail",
             "command -v docker >/dev/null 2>&1 || { echo 'docker is required' >&2; exit 1; }",
             "command -v aws >/dev/null 2>&1 || { echo 'aws CLI is required' >&2; exit 1; }",
+            "command -v curl >/dev/null 2>&1 || { echo 'curl is required' >&2; exit 1; }",
             "echo '${local.mcp_env_file_base64}' | base64 -d >${local.mcp_env_file_path}",
             "chmod 600 ${local.mcp_env_file_path}",
             "chown root:root ${local.mcp_env_file_path}",
+            local.health_check_script_command,
+            "chmod 750 ${local.health_check_script_path}",
+            "chown root:root ${local.health_check_script_path}",
+            local.health_check_service_command,
+            local.health_check_timer_command,
             local.service_unit_command,
             "systemctl daemon-reload",
             "systemctl enable --now mcp.service",
-            "systemctl status mcp.service --no-pager || true"
+            "systemctl enable --now mcp-healthcheck.timer",
+            "systemctl status mcp.service --no-pager || true",
+            "systemctl status mcp-healthcheck.timer --no-pager || true"
           ]
         }
       }

@@ -32,6 +32,8 @@ def test_service_unit_enables_container_auto_restart() -> None:
     assert "Restart=always" in unit
     assert "RestartSec=5" in unit
     assert "--restart unless-stopped" in unit
+    assert "StandardOutput=journal" in unit
+    assert "StandardError=journal" in unit
 
 
 def test_service_unit_recovers_from_previous_container_failure() -> None:
@@ -56,3 +58,15 @@ def test_service_unit_exposes_public_port() -> None:
 
     assert "docker run" in unit
     assert "-p 8000:8000" in unit
+
+
+def test_health_check_timer_is_configured() -> None:
+    """Bootstrap must install the health-check timer and script."""
+
+    file_text = INFRA_MAIN.read_text(encoding="utf-8")
+
+    assert "/usr/local/bin/mcp-health-check.sh" in file_text
+    assert "mcp-healthcheck.timer" in file_text
+    assert "systemctl enable --now mcp-healthcheck.timer" in file_text
+    assert "curl -fsS --max-time 5" in file_text
+    assert "systemctl restart mcp.service" in file_text
