@@ -281,6 +281,58 @@ desktop client can reach the public MCP endpoint immediately. The generated
 config prefers the HTTPS CloudFront address when available and includes the
 correct authorization header when an HTTP bearer token is configured.
 
+#### Securely handing credentials to Claude Desktop and other clients
+
+Claude Desktop and the official MCP client SDKs can read database credentials
+from a protected environment file. Follow this workflow when you need to share
+Vertica secrets with another operator or workstation without ever copying the
+plaintext into chat or source control:
+
+1. **Create a dedicated env file.** Start from one of the samples in
+   `examples/env/` (for example `public-ssl.env`) and save the populated copy as
+   `vertica-mcp.env`. Avoid naming it `.env` so the file is never committed to
+   this repository by mistake.
+2. **Lock down local permissions.** Ensure only the current user can read the
+   file: `chmod 600 vertica-mcp.env` on macOS/Linux or the equivalent "Read
+   access: Only me" ACL on Windows.
+3. **Encrypt before sharing.** Use a password-based archive when the file has to
+   leave your machine. A simple, reproducible option is
+   `openssl enc -aes-256-cbc -pbkdf2 -salt -in vertica-mcp.env -out vertica-mcp.env.enc`.
+   Send the encrypted payload and deliver the passphrase over a separate secure
+   channel (Signal, in-person, or a voice call).
+4. **Decrypt into the Claude configuration directory.** The desktop app loads
+   env files from the MCP server directory:
+   * **macOS:** `~/Library/Application Support/Claude/mcp/servers/vertica-mcp/.env`
+   * **Linux:** `~/.config/Claude/mcp/servers/vertica-mcp/.env`
+   * **Windows:** `%APPDATA%\Claude\mcp\servers\vertica-mcp\.env`
+
+   Copy the decrypted file into place. For example:
+
+   ```bash
+   # macOS
+   openssl enc -d -aes-256-cbc -pbkdf2 -in vertica-mcp.env.enc \
+     -out "$HOME/Library/Application Support/Claude/mcp/servers/vertica-mcp/.env"
+
+   # Linux (Claude AppImage)
+   openssl enc -d -aes-256-cbc -pbkdf2 -in vertica-mcp.env.enc \
+     -out "$HOME/.config/Claude/mcp/servers/vertica-mcp/.env"
+   ```
+
+   Adjust the output path to match the platform-specific directory above when
+   you are using Windows.
+5. **Reference the env file from the Claude config.** Add (or update) the
+   `metadata.environment.envFile` entry in `claude_desktop_config.json` so it
+   points at the absolute path you just created. An example lives in
+   `examples/claude_desktop_config.json`.
+6. **Tighten local hygiene.** Delete decrypted copies after testing and rely on
+   the password-protected archive for long-term storage. When scripting, prefer
+   referencing the env file via the `VERTICA_MCP_ENV_FILE` environment variable
+   instead of copying secrets into shell history.
+
+With this process the secrets are only ever written to disk on the target
+machine, and the Claude client (or any MCP-compatible app) can read them without
+hard-coding credentials into the desktop configuration itself.
+
 ## Deployment endpoints
 
 This section is automatically managed by the deployment workflow. Do not edit
