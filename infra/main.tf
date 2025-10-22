@@ -100,10 +100,10 @@ locals {
       exit 0
     fi
 
-    if ! /usr/bin/curl -fsS --max-time 5 "${HEALTH_ENDPOINT}" >/dev/null; then
+    if ! /usr/bin/curl -fsS --max-time 5 "$${HEALTH_ENDPOINT}" >/dev/null; then
       {
-        printf 'Health check failed at %s; restarting mcp.service\n' "$(date --iso-8601=seconds)"
-      } | /usr/bin/systemd-cat -t "${LOG_TAG}"
+        printf 'Health check failed at %s; restarting mcp.service\n' "$$(date --iso-8601=seconds)"
+      } | /usr/bin/systemd-cat -t "$${LOG_TAG}"
       /usr/bin/systemctl restart mcp.service
       exit 1
     fi
