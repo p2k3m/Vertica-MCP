@@ -36,6 +36,7 @@ def test_health_endpoint(monkeypatch, client):
     assert payload["ok"] is True
     assert "timestamp" in payload
     assert payload["checks"]["database"]["ok"] is True
+    assert payload["errors"] == []
     runtime_status = payload["status"]["runtime"]
     assert runtime_status["listen"]["host"]
     assert runtime_status["external_ip"]["ip"] == "203.0.113.10"
@@ -47,16 +48,18 @@ def test_health_endpoint(monkeypatch, client):
 
 
 def test_health_endpoint_reports_failures(monkeypatch, client):
-    monkeypatch.setattr(
-        server,
-        "_database_check",
-        lambda: {
+    def failing_check():
+        server.record_service_error(
+            source="database", message="no connection", context={"phase": "health"}
+        )
+        return {
             "ok": False,
             "pool": {},
             "target": {},
             "error": "no connection",
-        },
-    )
+        }
+
+    monkeypatch.setattr(server, "_database_check", failing_check)
 
     response = client.get("/healthz", params={"ping-vertica": "true"})
     assert response.status_code == 503
@@ -65,6 +68,8 @@ def test_health_endpoint_reports_failures(monkeypatch, client):
     assert payload["ok"] is False
     assert payload["checks"]["database"]["error"] == "no connection"
     assert "runtime" in payload["status"]
+    assert payload["errors"]
+    assert payload["errors"][0]["source"] == "database"
 
 
 def test_health_endpoint_reports_placeholder_credentials(monkeypatch):
@@ -89,6 +94,7 @@ def test_health_endpoint_reports_placeholder_credentials(monkeypatch):
     assert database["ok"] is False
     assert database["placeholder_credentials"] is True
     assert "placeholder" in database["error"].lower()
+    assert payload["errors"]
 
 
 def test_status_endpoint_is_lightweight(monkeypatch, client):
