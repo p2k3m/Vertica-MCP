@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from . import pool as pool_module
 from .config import DatabaseOverrides, settings
+from .logging_utils import recent_errors, record_service_error
 from .runtime import (
     allow_loopback_listen,
     external_ip_info,
@@ -37,6 +38,20 @@ except ImportError:  # pragma: no cover
 logger = logging.getLogger("mcp_vertica.server")
 
 app = FastAPI()
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception(
+        "Unhandled server error while processing %s %s", request.method, request.url.path
+    )
+    record_service_error(
+        source="server",
+        message=f"Unhandled server error while processing {request.method} {request.url.path}",
+        exception=exc,
+        context={"path": request.url.path, "method": request.method},
+    )
+    return JSONResponse({"detail": "Internal Server Error"}, status_code=500)
 
 
 def _service_version() -> str:
@@ -69,11 +84,18 @@ def _database_check() -> Dict[str, Any]:
     }
 
     if settings.using_placeholder_credentials():
+        message = "Vertica credentials are using repository placeholder values."
+        logger.error(message)
+        record_service_error(
+            source="database",
+            message=message,
+            context={"target": target, "placeholder_credentials": True},
+        )
         return {
             "ok": False,
             "pool": pool_info,
             "target": target,
-            "error": "Vertica credentials are using repository placeholder values.",
+            "error": message,
             "placeholder_credentials": True,
         }
 
@@ -89,6 +111,13 @@ def _database_check() -> Dict[str, Any]:
         if cursor is not None:
             with suppress(Exception):
                 cursor.close()
+        logger.exception("Vertica connectivity check failed")
+        record_service_error(
+            source="database",
+            message=f"Vertica connectivity check failed: {exc}",
+            exception=exc,
+            context={"target": target, "latency_ms": latency},
+        )
         return {
             "ok": False,
             "latency_ms": latency,
@@ -190,6 +219,13 @@ def _query_execution(query: str) -> Dict[str, Any]:
         if cursor is not None:
             with suppress(Exception):
                 cursor.close()
+        logger.exception("Vertica query execution failed")
+        record_service_error(
+            source="database",
+            message=f"Vertica query execution failed: {exc}",
+            exception=exc,
+            context={"query": trimmed, "latency_ms": latency},
+        )
         return {
             "ok": False,
             "latency_ms": latency,
@@ -442,6 +478,7 @@ def _health_response(*, ping_vertica: bool) -> Dict[str, Any]:
         "checks": checks,
         "diagnostics": diagnostics,
         "status": status,
+        "errors": recent_errors(),
     }
 
 

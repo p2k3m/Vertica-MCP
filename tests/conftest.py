@@ -16,6 +16,16 @@ for _key, _value in _ENV_DEFAULTS.items():
     os.environ.setdefault(_key, _value)
 
 from mcp_vertica import server  # noqa: E402  (import after environment defaults)
+from mcp_vertica.logging_utils import clear_error_history
+
+
+@pytest.fixture(autouse=True)
+def _reset_error_history() -> Generator[None, None, None]:
+    """Ensure each test starts with a clean error history."""
+
+    clear_error_history()
+    yield
+    clear_error_history()
 
 
 @pytest.fixture()
