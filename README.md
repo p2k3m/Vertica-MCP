@@ -200,6 +200,34 @@ rules—set `DB_DEBUG=1` (or any truthy value such as `true`/`yes`). The pool lo
 each failed attempt and whether the connection was ultimately established,
 making it easier to correlate failures with upstream network events.
 
+### Pipeline best practices
+
+Following a consistent release checklist keeps the Vertica MCP pipelines fast
+and predictable.
+
+1. **Start every branch with a clean environment.** Run `uv sync`, `npm ci`, or
+   the equivalent helper to align your local environment with the versions
+   enforced in CI before you begin work. When Terraform is involved, run
+   `./terraform.sh plan` with the same `AWS_REGION` the pipeline will use so you
+   can validate credentials early.
+2. **Run fast feedback loops locally.** Execute the unit tests (`uv run
+   pytest`) and linting (`uv run ruff check`) before opening a pull request to
+   catch obvious failures without waiting for GitHub Actions. When your change
+   impacts the MCP entrypoint, add a smoke test for `vertica-mcp --transport
+   http --bind-host 127.0.0.1` to confirm the CLI still boots.
+3. **Keep secrets out of the repo.** The CI/CD pipelines expect credentials to
+   arrive via GitHub Actions secrets or the `.env` files listed in the deployment
+   docs. Never commit raw passwords, Vertica DSNs, or Terraform state; rely on
+   the existing secret backends and let the workflow wire them in at runtime.
+4. **Prefer small, reviewable changes.** Group related Terraform, Python, and
+   JavaScript updates into cohesive commits, and avoid force-pushing once a
+   review has started. The workflow cache is keyed by commit hash, so rewriting
+   history leads to unnecessary rebuilds and longer feedback cycles.
+5. **Use workflow dispatch for infrastructure changes.** When modifying the
+   Terraform modules, trigger the staging deployment manually with the GitHub
+   Actions "Run workflow" button. Confirm the preview plan looks correct before
+   applying in production.
+
 ### Recovering from failed pipeline runs
 
 GitHub Actions surfaces full Terraform logs when a deployment workflow fails.
