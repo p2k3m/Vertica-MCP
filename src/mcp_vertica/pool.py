@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import logging
+import re
 import socket
 import time
 from contextlib import contextmanager
@@ -19,6 +20,56 @@ from .config import settings
 logger = logging.getLogger("mcp_vertica.pool")
 
 _POOL = Queue(maxsize=settings.pool_size)
+
+
+_SENSITIVE_KEYS = ("password", "token", "secret")
+_SENSITIVE_KEY_PATTERN = "|".join(re.escape(key) for key in _SENSITIVE_KEYS)
+_QUOTED_SENSITIVE_PATTERN = re.compile(
+    rf"(?P<key_quote>['\"])(?P<key>{_SENSITIVE_KEY_PATTERN})(?P=key_quote)\s*:\s*(?P<value_quote>['\"])(?P<value>.*?)(?P=value_quote)",
+    re.IGNORECASE,
+)
+_UNQUOTED_SENSITIVE_PATTERN = re.compile(
+    rf"(?P<prefix>(?P<key>{_SENSITIVE_KEY_PATTERN})\s*[=:]\s*)(?P<quote>['\"]?)(?P<value>[^'\"\s,;]+)(?P=quote)?",
+    re.IGNORECASE,
+)
+_AUTHORIZATION_PATTERN = re.compile(
+    r"(?P<prefix>authorization\s*[=:]\s*)(?P<scheme>bearer\s+)?(?P<value>[^\s,;]+)",
+    re.IGNORECASE,
+)
+_BEARER_PATTERN = re.compile(r"(Bearer\s+)([^\s,;]+)", re.IGNORECASE)
+
+
+def _redact_sensitive_text(text: str) -> str:
+    """Redact sensitive credential fragments from loggable text."""
+
+    if not text:
+        return text
+
+    def _quoted_repl(match: re.Match[str]) -> str:
+        return (
+            f"{match.group('key_quote')}{match.group('key')}{match.group('key_quote')}: "
+            f"{match.group('value_quote')}<redacted>{match.group('value_quote')}"
+        )
+
+    def _unquoted_repl(match: re.Match[str]) -> str:
+        prefix = match.group("prefix")
+        quote = match.group("quote") or ""
+        return f"{prefix}{quote}<redacted>{quote}"
+
+    def _authorization_repl(match: re.Match[str]) -> str:
+        scheme = match.group("scheme") or ""
+        return f"{match.group('prefix')}{scheme}<redacted>"
+
+    redacted = _QUOTED_SENSITIVE_PATTERN.sub(_quoted_repl, text)
+    redacted = _AUTHORIZATION_PATTERN.sub(_authorization_repl, redacted)
+    redacted = _UNQUOTED_SENSITIVE_PATTERN.sub(_unquoted_repl, redacted)
+    redacted = _BEARER_PATTERN.sub(lambda m: f"{m.group(1)}<redacted>", redacted)
+    return redacted
+
+
+def _exception_summary(exc: Exception) -> tuple[str, str | None]:
+    message = _redact_sensitive_text(str(exc)).strip()
+    return exc.__class__.__name__, message or None
 
 
 def _utcnow() -> datetime:
@@ -78,12 +129,13 @@ def _record_retry_failure(
     if attempt >= max_attempts:
         delay = 0.0
 
+    exc_name, exc_message = _exception_summary(exc)
     in_progress = attempt < max_attempts
     _RETRY_STATE.update(
         in_progress=in_progress,
         attempts=attempt,
-        last_failure=str(exc),
-        last_exception=exc.__class__.__name__,
+        last_failure=exc_message or exc_name,
+        last_exception=exc_name,
         last_failure_at=_isoformat(now),
         exhausted=not in_progress,
     )
@@ -189,19 +241,21 @@ def _connect_with_retry():
             conn = _new_conn()
         except Exception as exc:  # pragma: no cover - exercised via unit tests
             last_exc = exc
-            if settings.db_debug_logging:
-                logger.exception(
-                    "Failed to establish Vertica connection (attempt %s/%s)",
-                    attempt,
-                    attempts,
-                )
+            exc_name, exc_message = _exception_summary(exc)
+            log_message = (
+                "Failed to establish Vertica connection (attempt %s/%s)"
+            )
+            if exc_message:
+                log_message += ": %s: %s"
+                log_args = (attempt, attempts, exc_name, exc_message)
             else:
-                logger.warning(
-                    "Failed to establish Vertica connection (attempt %s/%s): %s",
-                    attempt,
-                    attempts,
-                    exc,
-                )
+                log_message += ": %s"
+                log_args = (attempt, attempts, exc_name)
+
+            if settings.db_debug_logging:
+                logger.error(log_message, *log_args)
+            else:
+                logger.warning(log_message, *log_args)
 
             delay = _record_retry_failure(
                 exc=exc, attempt=attempt, max_attempts=attempts, base_backoff=backoff
@@ -234,6 +288,28 @@ def _connect_with_retry():
 
     assert last_exc is not None
     classified = _classify_connection_exception(last_exc)
+    last_exc_name, last_exc_message = _exception_summary(last_exc)
+    if last_exc_message:
+        logger.error(
+            "Exhausted %s attempts to establish Vertica connection to %s:%s/%s as %s: %s: %s",
+            attempts,
+            settings.host,
+            settings.port,
+            settings.database,
+            settings.user,
+            last_exc_name,
+            last_exc_message,
+        )
+    else:
+        logger.error(
+            "Exhausted %s attempts to establish Vertica connection to %s:%s/%s as %s: %s",
+            attempts,
+            settings.host,
+            settings.port,
+            settings.database,
+            settings.user,
+            last_exc_name,
+        )
     if classified is last_exc:
         raise last_exc
     raise classified from last_exc

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Sequence
 
 from fastapi import FastAPI, Query, Request, HTTPException
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -40,8 +41,20 @@ logger = logging.getLogger("mcp_vertica.server")
 app = FastAPI()
 
 
+def _client_identity(request: Request) -> str:
+    client = request.client
+    if client is None:
+        return "unknown-client"
+    host = client.host or "unknown"
+    if client.port:
+        return f"{host}:{client.port}"
+    return host
+
+
 @app.exception_handler(Exception)
 async def _unhandled_exception_handler(request: Request, exc: Exception):
+    if isinstance(exc, HTTPException):
+        return await http_exception_handler(request, exc)
     logger.exception(
         "Unhandled server error while processing %s %s", request.method, request.url.path
     )
@@ -531,7 +544,15 @@ async def execute_query_endpoint(payload: QueryRequest):
 async def bearer(request: Request, call_next):
     token = settings.http_token
     if token and request.url.path not in ("/", "/healthz", "/status", "/api/info", "/sse"):
-        if request.headers.get("authorization") != f"Bearer {token}":
+        provided = request.headers.get("authorization")
+        if provided != f"Bearer {token}":
+            reason = "missing" if not provided else "mismatched"
+            logger.warning(
+                "Rejected unauthorized request for %s from %s (%s bearer token)",
+                request.url.path,
+                _client_identity(request),
+                reason,
+            )
             raise HTTPException(status_code=401, detail="Unauthorized")
     return await call_next(request)
 
