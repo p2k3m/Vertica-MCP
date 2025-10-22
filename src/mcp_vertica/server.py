@@ -71,6 +71,8 @@ def _pool_details() -> Dict[str, Any]:
             details["available"] = queue.qsize()
         with suppress(Exception):
             details["max_size"] = queue.maxsize
+    with suppress(Exception):
+        details["recovery"] = pool_module.connection_retry_state()
     return details
 
 

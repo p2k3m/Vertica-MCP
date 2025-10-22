@@ -7,7 +7,9 @@ import logging
 import socket
 import time
 from contextlib import contextmanager
+from datetime import datetime, timezone, timedelta
 from queue import Empty, Queue
+from typing import Any, Dict
 
 import vertica_python
 
@@ -17,6 +19,101 @@ from .config import settings
 logger = logging.getLogger("mcp_vertica.pool")
 
 _POOL = Queue(maxsize=settings.pool_size)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _isoformat(dt: datetime | None) -> str | None:
+    if dt is None:
+        return None
+    return dt.astimezone(timezone.utc).isoformat()
+
+
+def _exponential_backoff_delay(base: float, attempt: int) -> float:
+    if base <= 0:
+        return 0.0
+    exponent = max(0, attempt - 1)
+    return float(base) * (2 ** exponent)
+
+
+def _default_retry_state() -> Dict[str, Any]:
+    return {
+        "in_progress": False,
+        "attempts": 0,
+        "max_attempts": max(1, settings.connection_attempts),
+        "strategy": "exponential",
+        "base_backoff_s": max(0.0, settings.connection_retry_backoff_s),
+        "last_failure": None,
+        "last_exception": None,
+        "last_failure_at": None,
+        "next_retry_in_s": None,
+        "next_retry_at": None,
+        "recovered_at": None,
+        "exhausted": False,
+    }
+
+
+_RETRY_STATE: Dict[str, Any] = _default_retry_state()
+
+
+def _update_retry_context(*, attempts: int, base_backoff: float) -> None:
+    _RETRY_STATE.update(
+        max_attempts=attempts,
+        base_backoff_s=max(0.0, base_backoff),
+        strategy="exponential",
+    )
+
+
+def _record_retry_failure(
+    *,
+    exc: Exception,
+    attempt: int,
+    max_attempts: int,
+    base_backoff: float,
+) -> float:
+    now = _utcnow()
+    delay = _exponential_backoff_delay(base_backoff, attempt)
+    if attempt >= max_attempts:
+        delay = 0.0
+
+    in_progress = attempt < max_attempts
+    _RETRY_STATE.update(
+        in_progress=in_progress,
+        attempts=attempt,
+        last_failure=str(exc),
+        last_exception=exc.__class__.__name__,
+        last_failure_at=_isoformat(now),
+        exhausted=not in_progress,
+    )
+
+    if in_progress:
+        next_retry_at = now + timedelta(seconds=delay)
+        _RETRY_STATE.update(
+            next_retry_in_s=round(delay, 3),
+            next_retry_at=_isoformat(next_retry_at),
+        )
+    else:
+        _RETRY_STATE.update(next_retry_in_s=None, next_retry_at=None)
+
+    return delay
+
+
+def _record_retry_success(attempt: int) -> None:
+    now = _utcnow()
+    _RETRY_STATE.update(
+        in_progress=False,
+        attempts=attempt,
+        next_retry_in_s=None,
+        next_retry_at=None,
+        exhausted=False,
+        recovered_at=_isoformat(now),
+    )
+
+
+def connection_retry_state() -> Dict[str, Any]:
+    return dict(_RETRY_STATE)
 
 
 class VerticaConnectionSetupError(RuntimeError):
@@ -85,6 +182,8 @@ def _connect_with_retry():
     backoff = settings.connection_retry_backoff_s
     last_exc: Exception | None = None
 
+    _update_retry_context(attempts=attempts, base_backoff=backoff)
+
     for attempt in range(1, attempts + 1):
         try:
             conn = _new_conn()
@@ -104,10 +203,13 @@ def _connect_with_retry():
                     exc,
                 )
 
+            delay = _record_retry_failure(
+                exc=exc, attempt=attempt, max_attempts=attempts, base_backoff=backoff
+            )
+
             if attempt == attempts:
                 break
 
-            delay = max(0.0, backoff) * attempt
             if delay:
                 logger.info(
                     "Retrying Vertica connection in %.2fs (attempt %s/%s)",
@@ -127,6 +229,7 @@ def _connect_with_retry():
                 logger.debug(
                     "Established Vertica connection on attempt %s", attempt
                 )
+            _record_retry_success(attempt)
             return conn
 
     assert last_exc is not None
