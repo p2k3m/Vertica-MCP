@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 
+from fastapi.testclient import TestClient
+
 from mcp_vertica import server
 
 
@@ -123,3 +125,47 @@ def test_query_endpoint_reports_errors(monkeypatch, client):
     assert payload["ok"] is False
     assert payload["error"] == "boom"
     assert payload["exception"] == "RuntimeError"
+
+
+def test_bearer_middleware_logs_auth_failures(monkeypatch, caplog):
+    monkeypatch.setattr(server.settings, "http_token", "expected")
+
+    with _bootstrap_test_client(monkeypatch) as test_client:
+        caplog.set_level("WARNING")
+        response = test_client.get("/diagnostics")
+
+    assert response.status_code == 401
+    messages = [
+        record.message
+        for record in caplog.records
+        if "Rejected unauthorized request" in record.message
+    ]
+    assert messages, "Expected unauthorized access log entry"
+    assert "expected" not in messages[0]
+    assert "(missing bearer token)" in messages[0]
+
+
+def _bootstrap_test_client(monkeypatch):
+    monkeypatch.setattr(
+        server,
+        "_database_check",
+        lambda: {
+            "ok": True,
+            "latency_ms": 1.0,
+            "pool": {"configured_size": server.settings.pool_size},
+            "target": {
+                "host": server.settings.host,
+                "port": server.settings.port,
+                "database": server.settings.database,
+                "user": server.settings.user,
+            },
+        },
+    )
+
+    monkeypatch.setattr(
+        server,
+        "external_ip_info",
+        lambda timeout=2.0: {"ok": True, "ip": "203.0.113.10", "source": "test"},
+    )
+
+    return TestClient(server.app, raise_server_exceptions=False)

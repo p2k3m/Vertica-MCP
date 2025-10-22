@@ -120,6 +120,29 @@ def test_exponential_backoff_progression(monkeypatch, caplog):
     assert state["recovered_at"] is None
 
 
+def test_connection_failure_logs_redacted_credentials(monkeypatch, caplog):
+    _reset_pool(monkeypatch)
+    monkeypatch.setattr(pool.settings, "connection_attempts", 1)
+    monkeypatch.setattr(pool.settings, "connection_retry_backoff_s", 0.0)
+    monkeypatch.setattr(pool.settings, "db_debug_logging", False)
+
+    def failing_connect(**_kwargs):
+        raise RuntimeError("password=super-secret Authorization=Bearer 12345 token=abc")
+
+    monkeypatch.setattr(pool.vertica_python, "connect", failing_connect)
+
+    caplog.set_level("WARNING")
+    with pytest.raises(RuntimeError):
+        with pool.get_conn():
+            pass
+
+    combined = " ".join(record.message for record in caplog.records)
+    assert "super-secret" not in combined
+    assert "12345" not in combined
+    assert "token=abc" not in combined
+    assert combined.count("<redacted>") >= 2
+
+
 @pytest.mark.parametrize(
     "raised, expected_message",
     [
