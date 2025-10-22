@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "vertica-mcp": {
+      "transport": {
+        "type": "http",
+        "url": "http://3.109.150.92:8000/",
+        "sseUrl": "http://3.109.150.92:8000/sse",
+        "healthUrl": "http://3.109.150.92:8000/healthz"
+      },
+      "metadata": {
+        "environment": {
+          "envFile": "../examples/env/public-ssl.env"
+        }
+      }
+    }
+  }
+}
