@@ -150,6 +150,7 @@ def test_database_check_success(monkeypatch):
     assert result["pool"]["configured_size"] == server.settings.pool_size
     assert result["pool"]["available"] == 2
     assert result["pool"]["max_size"] == server.settings.pool_size
+    assert "recovery" in result["pool"]
     assert result["target"]["database"] == server.settings.database
     assert events["cursor_closed"] is True
 

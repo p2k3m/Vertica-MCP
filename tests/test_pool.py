@@ -16,12 +16,13 @@ class DummyConnection:
 
 def _reset_pool(monkeypatch) -> None:
     monkeypatch.setattr(pool, "_POOL", Queue(maxsize=1))
+    monkeypatch.setattr(pool, "_RETRY_STATE", pool._default_retry_state())
 
 
 def test_get_conn_retries_and_logs(monkeypatch, caplog):
     _reset_pool(monkeypatch)
     monkeypatch.setattr(pool.settings, "connection_attempts", 2)
-    monkeypatch.setattr(pool.settings, "connection_retry_backoff_s", 0.0)
+    monkeypatch.setattr(pool.settings, "connection_retry_backoff_s", 0.5)
     monkeypatch.setattr(pool.settings, "db_debug_logging", True)
 
     attempts = {"count": 0}
@@ -34,11 +35,19 @@ def test_get_conn_retries_and_logs(monkeypatch, caplog):
 
     monkeypatch.setattr(pool.vertica_python, "connect", flaky_connect)
 
+    sleeps: list[float] = []
+
+    def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(pool.time, "sleep", fake_sleep)
+
     caplog.set_level("DEBUG")
     with pool.get_conn() as conn:
         assert isinstance(conn, DummyConnection)
 
     assert attempts["count"] == 2
+    assert sleeps == [0.5]
     assert any(
         "Failed to establish Vertica connection" in message
         for message in caplog.messages
@@ -46,6 +55,15 @@ def test_get_conn_retries_and_logs(monkeypatch, caplog):
     assert any(
         "Established Vertica connection" in message for message in caplog.messages
     )
+
+    state = pool.connection_retry_state()
+    assert state["in_progress"] is False
+    assert state["attempts"] == 2
+    assert state["max_attempts"] == 2
+    assert state["last_failure"] == "temporary outage"
+    assert state["last_exception"] == "RuntimeError"
+    assert state["next_retry_in_s"] is None
+    assert state["recovered_at"] is not None
 
 
 def test_get_conn_raises_after_retry_exhaustion(monkeypatch, caplog):
@@ -65,6 +83,41 @@ def test_get_conn_raises_after_retry_exhaustion(monkeypatch, caplog):
             pass
 
     assert attempts_logged(caplog)
+
+
+def test_exponential_backoff_progression(monkeypatch, caplog):
+    _reset_pool(monkeypatch)
+    monkeypatch.setattr(pool.settings, "connection_attempts", 3)
+    monkeypatch.setattr(pool.settings, "connection_retry_backoff_s", 0.25)
+    monkeypatch.setattr(pool.settings, "db_debug_logging", False)
+
+    def failing_connect(**_kwargs):
+        raise RuntimeError("down")
+
+    sleeps: list[float] = []
+
+    def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(pool.vertica_python, "connect", failing_connect)
+    monkeypatch.setattr(pool.time, "sleep", fake_sleep)
+
+    caplog.set_level("WARNING")
+    with pytest.raises(RuntimeError):
+        with pool.get_conn():
+            pass
+
+    assert sleeps == [0.25, 0.5]
+    state = pool.connection_retry_state()
+    assert state["attempts"] == 3
+    assert state["max_attempts"] == 3
+    assert state["in_progress"] is False
+    assert state["exhausted"] is True
+    assert state["last_failure"] == "down"
+    assert state["last_exception"] == "RuntimeError"
+    assert state["last_failure_at"] is not None
+    assert state["next_retry_in_s"] is None
+    assert state["recovered_at"] is None
 
 
 @pytest.mark.parametrize(
