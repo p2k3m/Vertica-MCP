@@ -289,15 +289,15 @@ manually.
 <!-- BEGIN MCP ENDPOINTS -->
 
 **Direct EC2 (HTTP on port 8000)**  
-* Base URL: [`http://13.200.13.128:8000/`](http://13.200.13.128:8000/)
-* Health check: [`http://13.200.13.128:8000/healthz`](http://13.200.13.128:8000/healthz)
-* Server-Sent Events: [`http://13.200.13.128:8000/sse`](http://13.200.13.128:8000/sse)
-* Public IP: `13.200.13.128`
-* Public DNS: `ec2-13-200-13-128.ap-south-1.compute.amazonaws.com`
+* Base URL: [`http://3.109.150.92:8000/`](http://3.109.150.92:8000/)
+* Health check: [`http://3.109.150.92:8000/healthz`](http://3.109.150.92:8000/healthz)
+* Server-Sent Events: [`http://3.109.150.92:8000/sse`](http://3.109.150.92:8000/sse)
+* Public IP: `3.109.150.92`
+* Public DNS: `ec2-3-109-150-92.ap-south-1.compute.amazonaws.com`
 
 **CloudFront (HTTPS)**  
 * Not enabled for this deployment.
 
-_Last updated: 2025-10-22 15:23:17Z_
+_Last updated: 2025-10-22 16:33:15Z_
 
 <!-- END MCP ENDPOINTS -->
