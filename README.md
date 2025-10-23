@@ -470,6 +470,20 @@ With this process the secrets are only ever written to disk on the target
 machine, and the Claude client (or any MCP-compatible app) can read them without
 hard-coding credentials into the desktop configuration itself.
 
+#### Troubleshooting Claude and Cursor Desktop integration
+
+The following checklist covers the failure modes we have seen while wiring the
+Vertica MCP into Claude Desktop or Cursor. Match the symptom to the table and
+work through each remediation step before filing an issue.
+
+| Symptom | Likely cause | Step-by-step fix |
+| --- | --- | --- |
+| `terraform.sh` finishes but `build/claude-desktop-config.json` is missing, or the script prints `Skipping Claude Desktop config generation`. | The Terraform outputs did not include an HTTP endpoint (for example because the MCP stack is still provisioning or `LISTEN_HOST`/`LISTEN_PORT` are misconfigured). | 1. Run `./infra/terraform.sh output` and confirm the `mcp_a2a_metadata` block lists either `endpoints.https` or `endpoints.http`. 2. If the block is empty, verify the MCP container is healthy (`docker compose ps`) and re-run `./infra/terraform.sh apply`. 3. When targeting remote hosts, ensure the `LISTEN_*` variables expose a routable address before rerunning the apply. |
+| Claude or Cursor does not list the server after copying the config file. | The JSON file is in the wrong location or contains a syntax error. | 1. Validate the JSON with `python -m json.tool build/claude-desktop-config.json`. 2. Copy the file into the MCP directory that matches your platform and client: macOS `~/Library/Application Support/{Claude,Cursor}/mcp/servers/vertica-mcp/claude_desktop_config.json`, Linux `~/.config/{Claude,Cursor}/mcp/servers/vertica-mcp/claude_desktop_config.json`, Windows `%APPDATA%\{Claude,Cursor}\mcp\servers\vertica-mcp\claude_desktop_config.json`. 3. Restart the desktop app so it reloads the registry. |
+| Claude/Cursor shows the server but reports `ECONNREFUSED`, `ENOTFOUND`, or `Timed out` when connecting. | Networking from the desktop to the MCP endpoint is blocked. | 1. From the same workstation run `curl -I <base-url>/healthz` and `curl -N <sse-url>` (if configured). 2. If the calls fail, double-check security groups, firewall rules, and public DNS/IP routing in Terraform. 3. For corporate networks, add the MCP host to the proxy allow list or test from an unrestricted network. |
+| The desktop client connects but every tool call fails with `401 Unauthorized` or `Forbidden`. | The auth header or bearer token in the generated config no longer matches the server. | 1. Inspect `build/mcp-a2a.json` and confirm the `auth.header`, `auth.value`, or `auth.token` entries are populated. 2. If the token rotated, re-run `./infra/terraform.sh apply` so the helper script regenerates the desktop config. 3. On the desktop, delete the cached server directory and re-copy the refreshed JSON. |
+| Database actions fail immediately with `configuration envFile not found` or missing credential errors. | The `.env` file referenced by `metadata.environment.envFile` is missing or unreadable by the desktop app. | 1. Ensure the env file lives alongside the config under `.../mcp/servers/vertica-mcp/.env`. 2. Fix the permissions (`chmod 600` on macOS/Linux) so the desktop process can read it. 3. Re-open Claude or Cursor to reload the environment file before retrying the tool. |
+
 ## Deployment endpoints
 
 This section is automatically managed by the deployment workflow. Do not edit
