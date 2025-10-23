@@ -100,6 +100,25 @@ def test_root_endpoint_provides_links(client):
     assert payload["documentation"].startswith("https://")
 
 
+def test_info_endpoint_reports_server_details(client):
+    response = client.get("/info")
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["service"] == "vertica-mcp"
+    assert payload["version"]
+
+    uptime = payload["uptime"]
+    assert "started" in uptime
+    assert uptime["seconds"] >= 0
+
+    hosts = payload["connected_hosts"]
+    assert isinstance(hosts, list)
+    assert hosts, "Expected the active request host to be tracked"
+    assert hosts[0]["host"]
+    assert hosts[0]["connections"] >= 1
+
+
 def test_query_endpoint_executes_select(monkeypatch, client):
     events = {"executed": None, "cursor_closed": False}
 

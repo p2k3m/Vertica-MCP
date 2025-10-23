@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
 import os
@@ -37,6 +38,57 @@ except ImportError:  # pragma: no cover
 
 
 logger = logging.getLogger("mcp_vertica.server")
+
+
+class _ConnectedHostTracker:
+    """Track active HTTP clients by their remote host."""
+
+    def __init__(self) -> None:
+        self._counts: Dict[str, int] = {}
+        self._last_seen: Dict[str, datetime] = {}
+        self._lock = asyncio.Lock()
+
+    async def register(self, host: str | None) -> str:
+        """Record an active connection from *host*."""
+
+        canonical = (host or "unknown").strip() or "unknown"
+        async with self._lock:
+            self._counts[canonical] = self._counts.get(canonical, 0) + 1
+            self._last_seen[canonical] = datetime.now(timezone.utc)
+        return canonical
+
+    async def unregister(self, host: str | None) -> None:
+        """Release a previously registered host entry."""
+
+        canonical = (host or "unknown").strip() or "unknown"
+        async with self._lock:
+            count = self._counts.get(canonical)
+            if not count:
+                return
+            if count <= 1:
+                self._counts.pop(canonical, None)
+                self._last_seen.pop(canonical, None)
+            else:
+                self._counts[canonical] = count - 1
+                self._last_seen[canonical] = datetime.now(timezone.utc)
+
+    async def snapshot(self) -> list[dict[str, Any]]:
+        """Return a serialisable view of active host connections."""
+
+        async with self._lock:
+            return [
+                {
+                    "host": host,
+                    "connections": self._counts[host],
+                    "last_seen": self._last_seen[host].astimezone(timezone.utc).isoformat(),
+                }
+                for host in sorted(self._counts)
+            ]
+
+
+_CONNECTED_HOSTS = _ConnectedHostTracker()
+
+_SERVER_START_TIME = datetime.now(timezone.utc)
 
 app = FastAPI()
 
@@ -162,6 +214,15 @@ def _runtime_diagnostics() -> Dict[str, Any]:
         "platform": platform.platform(),
         "pid": os.getpid(),
         "service_version": _service_version(),
+    }
+
+
+def _uptime_details() -> Dict[str, Any]:
+    started = _SERVER_START_TIME
+    now = datetime.now(timezone.utc)
+    return {
+        "started": started.astimezone(timezone.utc).isoformat(),
+        "seconds": round((now - started).total_seconds(), 3),
     }
 
 
@@ -562,6 +623,16 @@ async def diagnostics():
     }
 
 
+@app.get("/info")
+async def info() -> Dict[str, Any]:
+    return {
+        "service": "vertica-mcp",
+        "version": _service_version(),
+        "uptime": _uptime_details(),
+        "connected_hosts": await _CONNECTED_HOSTS.snapshot(),
+    }
+
+
 @app.get("/dbs")
 async def list_databases():
     """Expose configured Vertica targets and the current connection state."""
@@ -581,18 +652,28 @@ async def execute_query_endpoint(payload: QueryRequest):
 @app.middleware("http")
 async def bearer(request: Request, call_next):
     token = settings.http_token
-    if token and request.url.path not in ("/", "/healthz", "/status", "/api/info", "/sse"):
-        provided = request.headers.get("authorization")
-        if provided != f"Bearer {token}":
-            reason = "missing" if not provided else "mismatched"
-            logger.warning(
-                "Rejected unauthorized request for %s from %s (%s bearer token)",
-                request.url.path,
-                _client_identity(request),
-                reason,
-            )
-            raise HTTPException(status_code=401, detail="Unauthorized")
-    return await call_next(request)
+    tracked_host: str | None = None
+    if request.client is not None:
+        tracked_host = await _CONNECTED_HOSTS.register(request.client.host)
+
+    try:
+        if token and request.url.path not in ("/", "/healthz", "/status", "/info", "/api/info", "/sse"):
+            provided = request.headers.get("authorization")
+            if provided != f"Bearer {token}":
+                reason = "missing" if not provided else "mismatched"
+                logger.warning(
+                    "Rejected unauthorized request for %s from %s (%s bearer token)",
+                    request.url.path,
+                    _client_identity(request),
+                    reason,
+                )
+                raise HTTPException(status_code=401, detail="Unauthorized")
+        response = await call_next(request)
+    finally:
+        if tracked_host is not None:
+            await _CONNECTED_HOSTS.unregister(tracked_host)
+
+    return response
 
 
 app.mount("/api", mcp.streamable_http_app())
@@ -601,6 +682,8 @@ app.mount("/sse", mcp.sse_app())
 
 @app.on_event("startup")
 async def _startup_validation() -> None:
+    global _SERVER_START_TIME
+    _SERVER_START_TIME = datetime.now(timezone.utc)
     logger.info(
         "Starting Vertica MCP targeting %s:%s/%s as %s",
         settings.host,
