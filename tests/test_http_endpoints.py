@@ -57,6 +57,39 @@ def test_diagnostics_endpoint(client):
     assert "config" in payload
 
 
+def test_dbs_endpoint_lists_configured_databases(monkeypatch):
+    backup_nodes = [("backup.vertica.example.com", 5434)]
+    monkeypatch.setattr(server.settings, "backup_nodes", backup_nodes)
+
+    with _bootstrap_test_client(monkeypatch) as test_client:
+        response = test_client.get("/dbs")
+
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["current"]["host"] == server.settings.host
+    assert payload["current"]["database"] == server.settings.database
+    assert payload["current"]["user"] == server.settings.user
+
+    supported = payload["supported"]
+    assert any(entry["role"] == "primary" for entry in supported)
+    backup_entries = [entry for entry in supported if entry["role"] == "backup"]
+    assert backup_entries == [
+        {
+            "role": "backup",
+            "host": backup_nodes[0][0],
+            "port": backup_nodes[0][1],
+            "database": server.settings.database,
+            "user": server.settings.user,
+        }
+    ]
+    for entry in supported:
+        assert "password" not in entry
+
+    pool = payload["pool"]
+    assert pool["configured_size"] == server.settings.pool_size
+
+
 def test_root_endpoint_provides_links(client):
     response = client.get("/")
     assert response.status_code == 200

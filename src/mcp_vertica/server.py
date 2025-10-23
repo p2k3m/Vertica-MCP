@@ -410,6 +410,33 @@ def _database_state() -> Dict[str, Any]:
     }
 
 
+def _supported_databases() -> list[Dict[str, Any]]:
+    """Return the configured Vertica connection targets."""
+
+    supported: list[Dict[str, Any]] = [
+        {
+            "role": "primary",
+            "host": settings.host,
+            "port": settings.port,
+            "database": settings.database,
+            "user": settings.user,
+        }
+    ]
+
+    for host, port in settings.backup_nodes:
+        supported.append(
+            {
+                "role": "backup",
+                "host": host,
+                "port": port,
+                "database": settings.database,
+                "user": settings.user,
+            }
+        )
+
+    return supported
+
+
 def _apply_database_override(overrides: DatabaseOverrides) -> Dict[str, Any]:
     """Apply a validated database override and reset the pool when available."""
 
@@ -532,6 +559,17 @@ async def diagnostics():
     return {
         "runtime": _runtime_diagnostics(),
         "config": _config_diagnostics(),
+    }
+
+
+@app.get("/dbs")
+async def list_databases():
+    """Expose configured Vertica targets and the current connection state."""
+
+    return {
+        "supported": _supported_databases(),
+        "current": _database_state(),
+        "pool": _pool_details(),
     }
 
 
