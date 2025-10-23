@@ -118,6 +118,116 @@ adds another layer of resilience with `Restart=always` and a five-second
 `/etc/mcp.env` file before the service starts, and `ExecStartPre` health checks
 ensure all required database settings are present before the container runs.
 
+### Public EC2 deployment checklist
+
+Provisioning a publicly reachable MCP host on EC2 requires a few extra steps
+after Terraform (or CloudFormation) finishes. The following checklist assumes
+you are exposing the default HTTP transport on port `8000`; adjust the port
+numbers if you have customized the service configuration.
+
+1. **Allocate or reuse an Elastic IP.** Assigning a static address prevents DNS
+   churn when the instance reboots. You can allocate an address in the target
+   region and attach it to the instance with the AWS CLI:
+
+   ```bash
+   aws ec2 allocate-address --domain vpc --region us-east-1
+   aws ec2 associate-address --allocation-id eipalloc-0123456789abcdef0 \
+     --instance-id i-0123456789abcdef0 --region us-east-1
+   ```
+
+2. **Create (or update) a security group.** Security groups default to
+   rejecting all inbound traffic except SSH. Create a dedicated group for the
+   MCP service and open TCP port `8000`:
+
+   ```bash
+   aws ec2 create-security-group \
+     --group-name vertica-mcp-public \
+     --description "Public MCP access" \
+     --vpc-id vpc-0123456789abcdef0 \
+     --region us-east-1
+
+   aws ec2 authorize-security-group-ingress \
+     --group-id sg-0123456789abcdef0 \
+     --protocol tcp \
+     --port 8000 \
+     --cidr 0.0.0.0/0 \
+     --region us-east-1
+   ```
+
+   Attach the security group to the instance either in the console or with:
+
+   ```bash
+   aws ec2 modify-instance-attribute \
+     --instance-id i-0123456789abcdef0 \
+     --groups sg-0123456789abcdef0 \
+     --region us-east-1
+   ```
+
+3. **Confirm the route table allows internet traffic.** Instances in public
+   subnets must target an internet gateway. Verify the relevant route table has
+   a `0.0.0.0/0` entry pointing to the gateway and that the subnet is
+   associated with the table.
+
+4. **Verify network ACLs.** Network ACLs are stateless and require explicit
+   inbound and outbound rules for the MCP port and the ephemeral range
+   (`1024–65535`). Align the ACL with the security group rules so responses can
+   reach clients.
+
+5. **Run the service health check.** After updating the networking layers, test
+   the public endpoint from a machine outside the VPC:
+
+   ```bash
+   curl -f https://mcp.example.com/healthz
+   # or, when testing direct EC2 access
+   curl -f http://203.0.113.10:8000/healthz
+   ```
+
+6. **Persist the `.env` file.** The systemd unit sources `/etc/mcp.env` on each
+   restart. Ensure your public endpoint settings (`PUBLIC_HTTP_HOST`,
+   `PUBLIC_HTTP_PORT`, TLS credentials, etc.) are present in that file before
+   restarting the service.
+
+### Sample AWS CLI workflow
+
+When you need to bootstrap an instance without Terraform, the following
+end-to-end CLI session spins up a t3.micro host, opens port `8000`, and writes
+the SSH access details to the console. Replace the placeholder IDs and region
+to match your account:
+
+```bash
+export AWS_REGION=us-east-1
+
+VPC_ID=$(aws ec2 describe-vpcs --region "$AWS_REGION" \
+  --query 'Vpcs[0].VpcId' --output text)
+SUBNET_ID=$(aws ec2 describe-subnets --region "$AWS_REGION" \
+  --filters "Name=vpc-id,Values=$VPC_ID" \
+  --query 'Subnets[0].SubnetId' --output text)
+
+KEY_NAME=vertica-mcp-admin
+aws ec2 create-key-pair --key-name "$KEY_NAME" --region "$AWS_REGION" \
+  --query 'KeyMaterial' --output text > vertica-mcp-admin.pem
+chmod 600 vertica-mcp-admin.pem
+
+SG_ID=$(aws ec2 create-security-group --group-name vertica-mcp-public \
+  --description "Public MCP access" --vpc-id "$VPC_ID" \
+  --region "$AWS_REGION" --query 'GroupId' --output text)
+aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --protocol tcp \
+  --port 8000 --cidr 0.0.0.0/0 --region "$AWS_REGION"
+
+INSTANCE_ID=$(aws ec2 run-instances --image-id ami-0123456789abcdef0 \
+  --instance-type t3.micro --key-name "$KEY_NAME" --subnet-id "$SUBNET_ID" \
+  --security-group-ids "$SG_ID" --associate-public-ip-address \
+  --region "$AWS_REGION" --query 'Instances[0].InstanceId' --output text)
+
+aws ec2 wait instance-status-ok --instance-ids "$INSTANCE_ID" --region "$AWS_REGION"
+PUBLIC_IP=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+  --region "$AWS_REGION" --query 'Reservations[0].Instances[0].PublicIpAddress' \
+  --output text)
+
+echo "SSH with: ssh -i vertica-mcp-admin.pem ubuntu@$PUBLIC_IP"
+echo "Health check: curl -f http://$PUBLIC_IP:8000/healthz"
+```
+
 ### EC2 network access checklist
 
 Even when the MCP service is healthy, inbound traffic to an EC2 instance is
@@ -242,6 +352,33 @@ To recover:
    `AWS_REGION=us-east-1 ./terraform.sh plan` (and `--recreate apply` when a
    clean rebuild is required). Address the issue, push the fix, and then re-run
    the GitHub workflow to confirm recovery.
+
+### Troubleshooting common AWS errors
+
+Public EC2 deployments encounter a recurring set of AWS-specific issues. Start
+with the following checks before escalating:
+
+* **`AuthFailure` when calling EC2 APIs** – The IAM principal lacks the required
+  permissions. Confirm the caller has `ec2:DescribeInstances`,
+  `ec2:ModifyInstanceAttribute`, `ec2:AuthorizeSecurityGroupIngress`, and any
+  other operations you rely on. When running inside GitHub Actions, verify the
+  OIDC trust policy matches the repository and branch.
+* **`InvalidGroup.NotFound` while attaching security groups** – The security
+  group was created in a different VPC or region. Re-run the CLI command with
+  `--region` explicitly set and confirm the VPC ID matches the target subnet.
+* **`AddressLimitExceeded` during Elastic IP allocation** – Your account has hit
+  the regional limit (usually five addresses). Release unused addresses with
+  `aws ec2 release-address --allocation-id ...` or request a limit increase via
+  the AWS console.
+* **`Connection timed out` from `/healthz`** – Networking is blocked between the
+  client and the instance. Double-check the security group, network ACLs, and
+  that the instance resides in a public subnet with a route to an internet
+  gateway. If you are using HTTPS, confirm the load balancer or reverse proxy is
+  healthy and forwarding traffic to the MCP port.
+* **Session Manager fails to connect** – EC2 Instance Connect and SSM require
+  the `AmazonSSMManagedInstanceCore` IAM role and outbound access to the SSM
+  endpoints. Attach the IAM role (or instance profile) and ensure the security
+  group allows outbound HTTPS (`443`).
 
 ### Switching Vertica connections at runtime
 
